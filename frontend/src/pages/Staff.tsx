@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Trash2 } from 'lucide-react';
+import { UserPlus, Trash2, Key } from 'lucide-react';
 import { getDb } from '../lib/db';
 import type { User } from '../lib/AuthContext';
 
@@ -94,6 +94,25 @@ export default function Staff() {
       loadUsers();
     } catch (e) {
       console.error('Failed to delete user', e);
+    }
+  }
+
+  async function handleResetPin(id: number, username: string) {
+    const newPin = prompt(`Enter new PIN for ${username}:`);
+    if (!newPin) return;
+    
+    if (newPin.trim().length < 4) {
+      alert('PIN must be at least 4 digits');
+      return;
+    }
+    
+    try {
+      const db = await getDb();
+      await db.execute('UPDATE users SET pin = $1 WHERE id = $2', [newPin.trim(), id]);
+      alert(`PIN for ${username} updated successfully!`);
+    } catch (e) {
+      console.error('Failed to reset PIN', e);
+      alert('Failed to reset PIN.');
     }
   }
 
@@ -205,7 +224,14 @@ export default function Staff() {
                     <td className="px-6 py-4 text-sm font-medium text-slate-600">
                       {u.role === 'admin' ? 'All Access' : `${u.permissions?.length || 0} Modules`}
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                      <button
+                        onClick={() => handleResetPin(u.id, u.username)}
+                        className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Reset PIN"
+                      >
+                        <Key className="w-5 h-5" />
+                      </button>
                       {u.username !== 'Admin' && (
                         <button
                           onClick={() => handleDeleteUser(u.id)}

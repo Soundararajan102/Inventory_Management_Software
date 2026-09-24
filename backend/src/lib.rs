@@ -191,6 +191,17 @@ pub fn run() {
       ALTER TABLE sales ADD COLUMN status TEXT DEFAULT 'Paid';
       ",
       kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 10,
+      description: "add_settings_table",
+      sql: "
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      ",
+      kind: MigrationKind::Up,
     }
   ];
 

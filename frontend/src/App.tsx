@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Package, ShoppingCart, Settings, Users, Truck, IndianRupee, Receipt, RotateCcw, FileText } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
@@ -12,7 +13,9 @@ import Reports from './pages/Reports';
 import Login from './pages/Login';
 import Staff from './pages/Staff';
 import BackupRestore from './pages/BackupRestore';
+import Activation from './pages/Activation';
 import { AuthProvider, useAuth } from './lib/AuthContext';
+import { isAppActivated } from './lib/db';
 
 // Main Sidebar Component
 function Sidebar() {
@@ -36,8 +39,8 @@ function Sidebar() {
   const visibleMenuItems = navItems.filter(item => user && (user.role === 'admin' || (user.permissions && user.permissions.includes(item.path))));
 
   return (
-    <div className="w-64 bg-slate-900 text-white flex flex-col min-h-screen border-r border-slate-800 shadow-2xl z-10">
-      <div className="p-6">
+    <div className="w-64 bg-slate-900 text-white flex flex-col h-full border-r border-slate-800 shadow-2xl z-10">
+      <div className="p-6 shrink-0">
         <h1 className="text-2xl font-bold tracking-tight text-blue-400 flex items-center gap-3">
           <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
             <span className="text-white font-bold text-lg leading-none">E</span>
@@ -47,7 +50,7 @@ function Sidebar() {
           </span>
         </h1>
       </div>
-      <nav className="flex-1 mt-4 space-y-1">
+      <nav className="flex-1 mt-4 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
         {visibleMenuItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.path;
@@ -65,7 +68,7 @@ function Sidebar() {
         })}
       </nav>
       {user && (
-        <div className="p-4 border-t border-slate-800 bg-slate-900/50">
+        <div className="p-4 border-t border-slate-800 bg-slate-900/50 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-bold uppercase mr-3 border border-slate-700">
@@ -120,6 +123,18 @@ function MainLayout() {
 }
 
 function App() {
+  const [activated, setActivated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    isAppActivated().then(setActivated);
+  }, []);
+
+  if (activated === null) return <div className="flex h-screen items-center justify-center bg-slate-900 text-slate-500">Checking License...</div>;
+
+  if (!activated) {
+    return <Activation onActivated={() => setActivated(true)} />;
+  }
+
   return (
     <AuthProvider>
       <Router>

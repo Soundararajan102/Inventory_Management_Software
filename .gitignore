@@ -14,3 +14,4 @@ backend/inventory.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+activation_qr.png

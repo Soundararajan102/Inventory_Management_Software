@@ -423,3 +423,28 @@ export async function getPurchaseReport(startDate: string, endDate: string): Pro
     [startDate, endDate]
   );
 }
+
+export async function isAppActivated(): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const result = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
+    if (result.length > 0) {
+      const expiryDate = new Date(result[0].value);
+      return expiryDate > new Date();
+    }
+    
+    // Fallback for previous 'is_activated' key before 1-year expiry feature was added
+    const legacyResult = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['is_activated']);
+    return legacyResult.length > 0 && legacyResult[0].value === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function activateApp(): Promise<void> {
+  const db = await getDb();
+  const expiry = new Date();
+  expiry.setFullYear(expiry.getFullYear() + 1);
+  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', expiry.toISOString()]);
+  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['is_activated', 'false']); // Remove legacy permanent activation
+}
