@@ -55,31 +55,31 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-        <div className="bg-blue-600 p-8 text-center">
-          <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-sm">
-            <Lock className="w-8 h-8 text-white" />
+    <div className="min-h-screen flex items-center justify-center bg-canvas p-4">
+      <div className="max-w-md w-full bg-canvas rounded-lg border border-hairline overflow-hidden shadow-none">
+        <div className="p-10 text-center border-b border-hairline bg-surface-soft">
+          <div className="w-16 h-16 bg-canvas border border-hairline rounded-full flex items-center justify-center mx-auto mb-5 shadow-sm">
+            <Lock className="w-6 h-6 text-ink" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Electrical POS</h1>
-          <p className="text-blue-100 mt-1">Sign in to your account</p>
+          <h1 className="text-3xl font-display font-medium text-ink tracking-tight">Electrical POS</h1>
+          <p className="text-body mt-2 text-base">Sign in to your account</p>
         </div>
         
         <form onSubmit={handleLogin} className="p-8">
           {error && (
-            <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm text-center font-medium animate-in fade-in">
+            <div className="mb-6 p-3 bg-canvas border border-signature-coral text-signature-coral rounded-sm text-sm text-center font-medium animate-in fade-in">
               {error}
             </div>
           )}
 
           <div className="mb-6">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Select User</label>
+            <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Select User</label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
               <select
                 value={selectedUsername}
                 onChange={(e) => setSelectedUsername(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-700 appearance-none"
+                className="w-full pl-9 pr-4 py-3 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors font-medium text-ink appearance-none text-sm"
               >
                 {usernames.map(u => (
                   <option key={u} value={u}>{u}</option>
@@ -89,14 +89,14 @@ export default function Login() {
           </div>
 
           <div className="mb-8">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Enter PIN</label>
+            <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Enter PIN</label>
             <input
               type="password"
               inputMode="numeric"
               pattern="[0-9]*"
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold text-center text-2xl tracking-[0.5em] text-slate-700"
+              className="w-full px-4 py-3 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors font-medium text-center text-xl tracking-[0.5em] text-ink placeholder-muted"
               placeholder="••••"
               required
             />
@@ -105,14 +105,14 @@ export default function Login() {
           <button
             type="submit"
             disabled={isLoading || pin.length === 0}
-            className={`w-full py-3.5 rounded-xl font-bold text-lg transition-all
+            className={`w-full py-3.5 rounded-lg font-medium transition-colors
               ${isLoading || pin.length === 0 
-                ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/30'}`}
+                ? 'bg-surface-soft text-muted border border-hairline cursor-not-allowed' 
+                : 'bg-primary hover:bg-primary-active text-on-primary shadow-none'}`}
           >
             {isLoading ? 'Verifying...' : 'Unlock System'}
           </button>
-          <div className="mt-4 text-center">
+          <div className="mt-6 text-center">
             <button
               type="button"
               onClick={() => {
@@ -121,7 +121,7 @@ export default function Login() {
                 setResetSuccess('');
                 setResetToken('');
               }}
-              className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+              className="text-sm font-medium text-muted hover:text-ink transition-colors border-b border-transparent hover:border-ink"
             >
               Forgot Admin PIN?
             </button>
@@ -130,16 +130,16 @@ export default function Login() {
       </div>
 
       {showForgotPin && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden animate-in zoom-in-95">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <div className="flex items-center gap-3 text-slate-800">
-                <KeyRound className="w-5 h-5 text-blue-500" />
-                <h3 className="font-bold text-lg">Reset Admin PIN</h3>
+        <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-canvas rounded-lg shadow-xl max-w-sm w-full overflow-hidden border border-hairline animate-in zoom-in-95">
+            <div className="p-6 border-b border-hairline flex justify-between items-center bg-surface-soft">
+              <div className="flex items-center gap-3 text-ink">
+                <KeyRound className="w-5 h-5 text-muted" />
+                <h3 className="font-medium text-lg">Reset Admin PIN</h3>
               </div>
               <button 
                 onClick={() => setShowForgotPin(false)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
+                className="text-muted hover:text-ink transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -148,31 +148,31 @@ export default function Login() {
             <div className="p-6">
               {resetSuccess ? (
                 <div className="text-center">
-                  <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div className="w-12 h-12 bg-surface-soft border border-hairline text-ink rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
-                  <p className="text-slate-800 font-medium">{resetSuccess}</p>
+                  <p className="text-ink font-medium">{resetSuccess}</p>
                   <button
                     onClick={() => {
                       setShowForgotPin(false);
                       setSelectedUsername('Admin');
                       setPin('');
                     }}
-                    className="mt-6 w-full py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    className="mt-6 w-full py-2.5 bg-primary text-on-primary font-medium rounded-lg hover:bg-primary-active transition-colors"
                   >
                     Back to Login
                   </button>
                 </div>
               ) : (
                 <>
-                  <p className="text-sm text-slate-500 mb-4 text-center">
+                  <p className="text-sm text-body mb-5 text-center">
                     Please contact your vendor to provide the 6-digit reset key to reset the Admin PIN back to <strong>1234</strong>.
                   </p>
                   
                   {resetError && (
-                    <div className="mb-4 p-2.5 bg-red-50 text-red-600 text-xs text-center font-medium rounded-lg">
+                    <div className="mb-4 p-2.5 bg-canvas border border-signature-coral text-signature-coral text-xs text-center font-medium rounded-sm">
                       {resetError}
                     </div>
                   )}
@@ -185,7 +185,7 @@ export default function Login() {
                     value={resetToken}
                     onChange={(e) => setResetToken(e.target.value.replace(/\D/g, ''))}
                     placeholder="123456"
-                    className="w-full text-center text-3xl font-mono tracking-widest p-4 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 mb-6"
+                    className="w-full text-center text-3xl font-mono tracking-widest p-4 border border-hairline rounded-sm focus:outline-none focus:border-ink bg-canvas mb-6 text-ink placeholder-muted"
                   />
                   
                   <button
@@ -221,7 +221,7 @@ export default function Login() {
                       }
                     }}
                     disabled={resetToken.length !== 6}
-                    className="w-full py-3 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full py-3 bg-primary text-on-primary font-medium rounded-lg hover:bg-primary-active transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Verify & Reset PIN
                   </button>

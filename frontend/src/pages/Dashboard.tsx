@@ -39,10 +39,10 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-8 h-full flex flex-col bg-slate-50 overflow-y-auto">
+    <div className="p-8 h-full flex flex-col bg-canvas overflow-y-auto">
       <header className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Business Dashboard</h1>
-        <p className="text-slate-500 mt-1">Real-time overview of your business metrics</p>
+        <h1 className="text-3xl font-bold text-ink tracking-tight">Business Dashboard</h1>
+        <p className="text-muted mt-1">Real-time overview of your business metrics</p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
@@ -96,9 +96,9 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex-1">
+      <div className="bg-canvas rounded-xl shadow-none border border-hairline p-6 flex-1">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-slate-800">Quick Actions</h2>
+          <h2 className="text-xl font-semibold text-ink">Quick Actions</h2>
           <button 
             onClick={() => {
               setTempSelected(selectedActions);
@@ -163,10 +163,10 @@ export default function Dashboard() {
               </div>
             </div>
             
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+            <div className="p-4 border-t border-hairline bg-canvas flex justify-end gap-3">
               <button 
                 onClick={() => setIsEditModalOpen(false)}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors"
+                className="px-4 py-2 text-ink hover:bg-surface-soft rounded-lg font-medium transition-colors border border-hairline"
               >
                 Cancel
               </button>
@@ -176,7 +176,7 @@ export default function Dashboard() {
                   localStorage.setItem('quickActions', JSON.stringify(tempSelected));
                   setIsEditModalOpen(false);
                 }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium shadow-sm transition-colors"
+                className="px-4 py-2 bg-primary hover:bg-primary-active text-on-primary rounded-lg font-medium shadow-sm transition-colors"
               >
                 Save Changes
               </button>
@@ -190,13 +190,13 @@ export default function Dashboard() {
 
 function StatCard({ title, value, icon: Icon, color }: { title: string, value: string, icon: any, color: string }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center">
+    <div className="bg-canvas rounded-xl shadow-none border border-hairline p-6 flex items-center">
       <div className={`p-4 rounded-full mr-4 ${color}`}>
         <Icon className="w-6 h-6" />
       </div>
       <div>
-        <p className="text-sm text-gray-500 font-medium">{title}</p>
-        <p className="text-2xl font-bold text-gray-800">{value}</p>
+        <p className="text-sm text-muted font-medium">{title}</p>
+        <p className="text-2xl font-bold text-ink">{value}</p>
       </div>
     </div>
   );

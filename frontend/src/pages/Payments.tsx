@@ -84,38 +84,38 @@ export default function Payments() {
   const totalPayables = suppliers.reduce((sum, s) => sum + Math.max(0, s.balance), 0);
 
   return (
-    <div className="p-8 h-full flex flex-col relative bg-slate-50">
-      <header className="mb-6 flex justify-between items-end">
+    <div className="p-8 h-full flex flex-col relative bg-canvas overflow-y-auto">
+      <header className="mb-12 flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Payments & Outstanding</h1>
-          <p className="text-slate-500 mt-1">Track receivables from customers and payables to suppliers.</p>
+          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Payments & Outstanding</h1>
+          <p className="text-body text-base mt-2">Track receivables from customers and payables to suppliers.</p>
         </div>
         <div className="flex gap-4">
-          <div className="bg-emerald-50 border border-emerald-100 px-5 py-3 rounded-xl shadow-sm">
-            <div className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">Total Receivables</div>
-            <div className="text-2xl font-black text-emerald-700">₹{totalReceivables.toFixed(2)}</div>
+          <div className="bg-signature-forest text-on-primary px-6 py-4 rounded-lg min-w-[200px]">
+            <div className="text-xs font-medium text-on-primary/80 uppercase tracking-wider mb-2">Total Receivables</div>
+            <div className="text-3xl font-display text-on-primary">₹{totalReceivables.toFixed(2)}</div>
           </div>
-          <div className="bg-orange-50 border border-orange-100 px-5 py-3 rounded-xl shadow-sm">
-            <div className="text-xs font-bold text-orange-600 uppercase tracking-wider mb-1">Total Payables</div>
-            <div className="text-2xl font-black text-orange-700">₹{totalPayables.toFixed(2)}</div>
+          <div className="bg-signature-coral text-on-primary px-6 py-4 rounded-lg min-w-[200px]">
+            <div className="text-xs font-medium text-on-primary/80 uppercase tracking-wider mb-2">Total Payables</div>
+            <div className="text-3xl font-display text-on-primary">₹{totalPayables.toFixed(2)}</div>
           </div>
         </div>
       </header>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 flex flex-col overflow-hidden">
+      <div className="bg-canvas rounded-lg border border-hairline flex-1 flex flex-col overflow-hidden">
         {/* Toolbar & Tabs */}
-        <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50/50 backdrop-blur-sm">
+        <div className="p-4 border-b border-hairline flex justify-between items-center bg-canvas">
           <div className="flex gap-2">
             <button 
               onClick={() => setActiveTab('customers')}
-              className={`px-5 py-2.5 rounded-lg font-bold flex items-center transition-all ${activeTab === 'customers' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}
+              className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'customers' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
             >
               <Users className="w-4 h-4 mr-2" />
               Customer Receivables
             </button>
             <button 
               onClick={() => setActiveTab('suppliers')}
-              className={`px-5 py-2.5 rounded-lg font-bold flex items-center transition-all ${activeTab === 'suppliers' ? 'bg-white text-orange-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'}`}
+              className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'suppliers' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
             >
               <Truck className="w-4 h-4 mr-2" />
               Supplier Payables
@@ -123,11 +123,11 @@ export default function Payments() {
           </div>
 
           <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted w-4 h-4" />
             <input 
               type="text" 
               placeholder={`Search ${activeTab}...`}
-              className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 placeholder-slate-400 font-medium"
+              className="w-full pl-9 pr-4 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink placeholder-muted text-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -135,38 +135,35 @@ export default function Payments() {
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto flex-1 bg-white">
+        <div className="overflow-x-auto flex-1 bg-canvas">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 backdrop-blur-sm border-b border-slate-200 text-slate-500 text-xs font-bold uppercase tracking-wider sticky top-0 z-10">
+              <tr className="bg-surface-soft border-b border-hairline text-muted text-xs font-medium uppercase tracking-wider sticky top-0 z-10">
                 <th className="px-6 py-4">{activeTab === 'customers' ? 'Customer' : 'Supplier'} Name</th>
                 <th className="px-6 py-4">Contact</th>
                 <th className="px-6 py-4 text-right">Outstanding Balance (₹)</th>
                 <th className="px-6 py-4 text-center">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-hairline">
               {(activeTab === 'customers' ? filteredCustomers : filteredSuppliers).map((entity: any) => (
-                <tr key={entity.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-50 last:border-0">
+                <tr key={entity.id} className="hover:bg-surface-soft transition-colors border-b border-hairline last:border-0">
                   <td className="px-6 py-4">
-                    <div className="font-bold text-slate-800">{entity.name}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">ID: #{entity.id}</div>
+                    <div className="font-medium text-ink">{entity.name}</div>
+                    <div className="text-xs text-muted mt-0.5">ID: #{entity.id}</div>
                   </td>
-                  <td className="px-6 py-4 text-slate-500 text-sm font-medium">
-                    {entity.phone || entity.email || <span className="text-slate-300 italic">N/A</span>}
+                  <td className="px-6 py-4 text-muted text-sm">
+                    {entity.phone || entity.email || <span className="italic">N/A</span>}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <span className="font-black text-slate-800 text-lg">
+                    <span className="font-medium text-ink text-base">
                       ₹{entity.balance.toFixed(2)}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">
                     <button 
                       onClick={() => openPaymentModal(entity)}
-                      className={`px-4 py-2 rounded-lg font-bold shadow-sm transition-all text-sm inline-flex items-center
-                        ${activeTab === 'customers' 
-                          ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' 
-                          : 'bg-orange-100 text-orange-700 hover:bg-orange-200'}`}
+                      className="px-4 py-2 rounded-sm font-medium transition-colors text-sm inline-flex items-center bg-canvas text-ink border border-hairline hover:bg-surface-soft"
                     >
                       <IndianRupee className="w-4 h-4 mr-1.5" /> 
                       {activeTab === 'customers' ? 'Receive Payment' : 'Pay Supplier'}
@@ -176,13 +173,13 @@ export default function Payments() {
               ))}
               {(activeTab === 'customers' ? filteredCustomers : filteredSuppliers).length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-16 text-center text-slate-500">
+                  <td colSpan={4} className="p-16 text-center text-muted">
                     <div className="flex flex-col items-center justify-center">
-                      <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
-                        <IndianRupee className="w-8 h-8 text-slate-300" />
+                      <div className="w-16 h-16 bg-surface-soft rounded-full flex items-center justify-center mb-4 border border-hairline">
+                        <IndianRupee className="w-6 h-6 text-muted" />
                       </div>
-                      <p className="font-medium text-slate-600">No outstanding {activeTab === 'customers' ? 'receivables' : 'payables'} found.</p>
-                      <p className="text-sm mt-1">All dues are settled!</p>
+                      <p className="font-medium text-ink">No outstanding {activeTab === 'customers' ? 'receivables' : 'payables'} found.</p>
+                      <p className="text-sm mt-1">All dues are settled.</p>
                     </div>
                   </td>
                 </tr>
@@ -194,29 +191,29 @@ export default function Payments() {
 
       {/* Payment Modal */}
       {isModalOpen && selectedEntity && (
-        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
-            <div className={`px-6 py-5 border-b border-slate-100 flex justify-between items-center ${activeTab === 'customers' ? 'bg-emerald-50' : 'bg-orange-50'}`}>
+        <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-canvas rounded-lg shadow-xl w-full max-w-md overflow-hidden border border-hairline">
+            <div className="px-6 py-5 border-b border-hairline flex justify-between items-center bg-surface-soft">
               <div>
-                <h2 className="text-lg font-bold text-slate-800">
+                <h2 className="text-lg font-medium text-ink">
                   {activeTab === 'customers' ? 'Receive Payment' : 'Make Payment'}
                 </h2>
-                <p className="text-sm font-medium text-slate-500 mt-0.5">{selectedEntity.name}</p>
+                <p className="text-sm text-muted mt-0.5">{selectedEntity.name}</p>
               </div>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors bg-white rounded-full p-1 shadow-sm">
+              <button onClick={() => setIsModalOpen(false)} className="text-muted hover:text-ink transition-colors p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
-            <form onSubmit={handleRecordPayment} className="p-6 flex flex-col gap-5">
+            <form onSubmit={handleRecordPayment} className="p-6 flex flex-col gap-6">
               
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 flex justify-between items-center">
-                <span className="text-sm font-bold text-slate-500 uppercase tracking-wider">Current Balance</span>
-                <span className="text-xl font-black text-slate-800">₹{selectedEntity.balance.toFixed(2)}</span>
+              <div className="bg-surface-soft rounded-md p-4 border border-hairline flex justify-between items-center">
+                <span className="text-sm font-medium text-muted uppercase tracking-wider">Current Balance</span>
+                <span className="text-xl font-display text-ink">₹{selectedEntity.balance.toFixed(2)}</span>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Amount (₹) *</label>
+                <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Amount (₹)</label>
                 <input 
                   required 
                   type="number" 
@@ -225,18 +222,18 @@ export default function Payments() {
                   max={selectedEntity.balance}
                   value={amount} 
                   onChange={e => setAmount(e.target.value === '' ? '' : Number(e.target.value))} 
-                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 text-lg font-bold text-slate-800 transition-all" 
+                  className="w-full px-4 py-3 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink text-base text-ink transition-colors" 
                   placeholder="0.00" 
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Payment Mode *</label>
+                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Payment Mode</label>
                   <select 
                     value={paymentMode} 
                     onChange={e => setPaymentMode(e.target.value)} 
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-800"
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink text-sm text-ink"
                   >
                     <option value="Cash">Cash</option>
                     <option value="UPI">UPI</option>
@@ -245,40 +242,38 @@ export default function Payments() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Reference No</label>
+                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Reference No</label>
                   <input 
                     type="text" 
                     value={referenceNo} 
                     onChange={e => setReferenceNo(e.target.value)} 
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-800 placeholder-slate-400" 
-                    placeholder="Txn ID / Cheque No" 
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink text-sm text-ink placeholder-muted" 
+                    placeholder="Txn ID / Cheque" 
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Notes</label>
+                <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Notes</label>
                 <textarea 
                   rows={2} 
                   value={notes} 
                   onChange={e => setNotes(e.target.value)} 
-                  className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none font-medium text-slate-800 placeholder-slate-400" 
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink text-sm text-ink placeholder-muted resize-none" 
                   placeholder="Optional details..." 
                 />
               </div>
               
-              <div className="mt-2 pt-5 border-t border-slate-100">
+              <div className="mt-4">
                 <button 
                   type="submit" 
                   disabled={isProcessing || amount === '' || amount <= 0}
-                  className={`w-full py-3.5 rounded-xl font-bold text-lg flex items-center justify-center transition-all shadow-lg
+                  className={`w-full py-3 rounded-lg font-medium text-base flex items-center justify-center transition-colors
                     ${isProcessing || amount === '' || amount <= 0 
-                      ? 'bg-slate-200 text-slate-400 shadow-none cursor-not-allowed' 
-                      : activeTab === 'customers' 
-                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20' 
-                        : 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-500/20'}`}
+                      ? 'bg-surface-strong text-muted cursor-not-allowed' 
+                      : 'bg-primary hover:bg-primary-active text-on-primary'}`}
                 >
-                  <IndianRupee className="w-5 h-5 mr-2" /> 
+                  <IndianRupee className="w-4 h-4 mr-2" /> 
                   {isProcessing ? 'Processing...' : `Record ${activeTab === 'customers' ? 'Receipt' : 'Payment'}`}
                 </button>
               </div>

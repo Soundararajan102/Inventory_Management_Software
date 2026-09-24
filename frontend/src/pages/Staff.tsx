@@ -117,50 +117,52 @@ export default function Staff() {
   }
 
   return (
-    <div className="p-8 h-full bg-slate-50 overflow-y-auto">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Staff Management</h1>
-        <p className="text-slate-500 mt-1">Manage user accounts and custom permissions</p>
+    <div className="p-8 h-full flex flex-col relative bg-canvas overflow-y-auto">
+      <header className="mb-12 flex justify-between items-end">
+        <div>
+          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Staff Management</h1>
+          <p className="text-base text-body mt-2">Manage user accounts and custom permissions.</p>
+        </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center">
-              <UserPlus className="w-5 h-5 mr-2 text-blue-500" />
+          <div className="bg-canvas p-6 rounded-lg border border-hairline">
+            <h2 className="text-lg font-medium text-ink mb-5 flex items-center">
+              <UserPlus className="w-5 h-5 mr-2 text-muted" />
               Add New User
             </h2>
             <form onSubmit={handleAddUser}>
-              <div className="space-y-4">
+              <div className="space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
+                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Username *</label>
                   <input
                     type="text"
                     value={newUsername}
                     onChange={(e) => setNewUsername(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">PIN</label>
+                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">PIN *</label>
                   <input
                     type="password"
                     inputMode="numeric"
                     pattern="[0-9]*"
                     value={newPin}
                     onChange={(e) => setNewPin(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono tracking-widest"
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm font-mono tracking-widest"
                     placeholder="e.g. 1234"
                     required
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Role Template</label>
+                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Role Template</label>
                   <select
                     value={newRole}
                     onChange={(e) => handleRoleChange(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm"
                   >
                     <option value="billing">Billing Staff</option>
                     <option value="stock">Stock Staff</option>
@@ -169,8 +171,8 @@ export default function Staff() {
                 </div>
 
                 <div className="pt-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Custom Permissions</label>
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2 max-h-60 overflow-y-auto">
+                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Custom Permissions</label>
+                  <div className="bg-surface-soft border border-hairline rounded-sm p-4 space-y-3 max-h-60 overflow-y-auto">
                     {AVAILABLE_PERMISSIONS.map(perm => (
                       <label key={perm.path} className="flex items-center space-x-3 cursor-pointer">
                         <input 
@@ -178,18 +180,18 @@ export default function Staff() {
                           checked={newPermissions.includes(perm.path)}
                           onChange={() => togglePermission(perm.path)}
                           disabled={newRole === 'admin'} // Admin always has all
-                          className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                          className="w-4 h-4 text-ink border-hairline rounded-sm focus:ring-ink"
                         />
-                        <span className="text-sm text-slate-700 font-medium">{perm.name}</span>
+                        <span className="text-sm text-ink font-medium">{perm.name}</span>
                       </label>
                     ))}
                   </div>
-                  {newRole === 'admin' && <p className="text-xs text-slate-500 mt-2">Admin users automatically have all permissions.</p>}
+                  {newRole === 'admin' && <p className="text-xs text-muted mt-2">Admin users automatically have all permissions.</p>}
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 text-white font-bold py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  className="w-full bg-primary text-on-primary font-medium py-3 rounded-lg hover:bg-primary-active transition-colors text-sm"
                 >
                   Create User
                 </button>
@@ -199,35 +201,32 @@ export default function Staff() {
         </div>
 
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <table className="w-full text-left">
+          <div className="bg-canvas rounded-lg border border-hairline overflow-hidden">
+            <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
-                  <th className="px-6 py-4 font-bold">Username</th>
-                  <th className="px-6 py-4 font-bold">Role</th>
-                  <th className="px-6 py-4 font-bold">Access Count</th>
-                  <th className="px-6 py-4 text-right font-bold">Actions</th>
+                <tr className="bg-surface-soft border-b border-hairline text-muted text-xs font-medium uppercase tracking-wider">
+                  <th className="px-6 py-4">Username</th>
+                  <th className="px-6 py-4">Role</th>
+                  <th className="px-6 py-4">Access Count</th>
+                  <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-hairline">
                 {users.map((u) => (
-                  <tr key={u.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 font-bold text-slate-800">{u.username}</td>
+                  <tr key={u.id} className="hover:bg-surface-soft transition-colors border-b border-hairline last:border-0">
+                    <td className="px-6 py-4 font-medium text-ink">{u.username}</td>
                     <td className="px-6 py-4">
-                      <span className={`px-2 py-1 text-xs font-bold rounded-full uppercase
-                        ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' :
-                          u.role === 'billing' ? 'bg-blue-100 text-blue-700' :
-                          'bg-emerald-100 text-emerald-700'}`}>
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-sm uppercase border border-hairline text-ink bg-canvas`}>
                         {u.role}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-600">
+                    <td className="px-6 py-4 text-sm font-medium text-muted">
                       {u.role === 'admin' ? 'All Access' : `${u.permissions?.length || 0} Modules`}
                     </td>
                     <td className="px-6 py-4 text-right flex justify-end gap-2">
                       <button
                         onClick={() => handleResetPin(u.id, u.username)}
-                        className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                        className="p-1 text-muted hover:text-ink hover:bg-surface-soft rounded-sm transition-colors"
                         title="Reset PIN"
                       >
                         <Key className="w-5 h-5" />
@@ -235,7 +234,7 @@ export default function Staff() {
                       {u.username !== 'Admin' && (
                         <button
                           onClick={() => handleDeleteUser(u.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          className="p-1 text-muted hover:text-signature-coral hover:bg-surface-soft rounded-sm transition-colors"
                           title="Delete User"
                         >
                           <Trash2 className="w-5 h-5" />

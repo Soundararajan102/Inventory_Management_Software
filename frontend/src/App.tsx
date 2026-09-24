@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Package, ShoppingCart, Settings, Users, Truck, IndianRupee, Receipt, RotateCcw, FileText } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -20,37 +20,52 @@ import { isAppActivated } from './lib/db';
 // Main Sidebar Component
 function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
 
   const navItems = [
-    { name: 'Dashboard', path: '/', icon: LayoutDashboard, roles: ['admin', 'billing', 'stock'] },
-    { name: 'POS / Billing', path: '/pos', icon: ShoppingCart, roles: ['admin', 'billing'] },
-    { name: 'Purchases', path: '/purchases', icon: Truck, roles: ['admin', 'stock'] },
-    { name: 'Payments', path: '/payments', icon: IndianRupee, roles: ['admin'] },
-    { name: 'Expenses', path: '/expenses', icon: Receipt, roles: ['admin'] },
-    { name: 'Returns', path: '/returns', icon: RotateCcw, roles: ['admin', 'billing', 'stock'] },
-    { name: 'Reports', path: '/reports', icon: FileText, roles: ['admin'] },
-    { name: 'Inventory', path: '/inventory', icon: Package, roles: ['admin', 'stock'] },
-    { name: 'Contacts', path: '/contacts', icon: Users, roles: ['admin', 'billing'] },
-    { name: 'Staff', path: '/staff', icon: Users, roles: ['admin'] },
-    { name: 'Settings (Backup)', path: '/settings', icon: Settings, roles: ['admin'] },
+    { name: 'Dashboard', path: '/', icon: LayoutDashboard, roles: ['admin', 'billing', 'stock'], shortcut: '1' },
+    { name: 'POS / Billing', path: '/pos', icon: ShoppingCart, roles: ['admin', 'billing'], shortcut: '2' },
+    { name: 'Purchases', path: '/purchases', icon: Truck, roles: ['admin', 'stock'], shortcut: '3' },
+    { name: 'Payments', path: '/payments', icon: IndianRupee, roles: ['admin'], shortcut: '4' },
+    { name: 'Expenses', path: '/expenses', icon: Receipt, roles: ['admin'], shortcut: '5' },
+    { name: 'Returns', path: '/returns', icon: RotateCcw, roles: ['admin', 'billing', 'stock'], shortcut: '6' },
+    { name: 'Reports', path: '/reports', icon: FileText, roles: ['admin'], shortcut: '7' },
+    { name: 'Inventory', path: '/inventory', icon: Package, roles: ['admin', 'stock'], shortcut: '8' },
+    { name: 'Contacts', path: '/contacts', icon: Users, roles: ['admin', 'billing'], shortcut: '9' },
+    { name: 'Staff', path: '/staff', icon: Users, roles: ['admin'], shortcut: '0' },
+    { name: 'Settings (Backup)', path: '/settings', icon: Settings, roles: ['admin'], shortcut: '-' },
   ];
 
   const visibleMenuItems = navItems.filter(item => user && (user.role === 'admin' || (user.permissions && user.permissions.includes(item.path))));
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey) {
+        const item = visibleMenuItems.find(i => i.shortcut === e.key);
+        if (item) {
+          e.preventDefault();
+          navigate(item.path);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigate, visibleMenuItems]);
+
   return (
-    <div className="w-64 bg-slate-900 text-white flex flex-col h-full border-r border-slate-800 shadow-2xl z-10">
+    <div className="w-64 bg-canvas text-body flex flex-col h-full border-r border-hairline z-10">
       <div className="p-6 shrink-0">
-        <h1 className="text-2xl font-bold tracking-tight text-blue-400 flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <span className="text-white font-bold text-lg leading-none">E</span>
+        <h1 className="text-2xl font-bold tracking-tight text-ink flex items-center gap-3">
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-sm">
+            <span className="text-on-primary font-bold text-lg leading-none">E</span>
           </div>
           <span className="flex flex-col gap-0 leading-tight">
-            Electrical<span className="text-white text-sm">Shop</span>
+            Electrical<span className="text-muted text-sm font-medium">Shop</span>
           </span>
         </h1>
       </div>
-      <nav className="flex-1 mt-4 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
+      <nav className="flex-1 mt-4 space-y-1 overflow-y-auto pb-4">
         {visibleMenuItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.path;
@@ -58,28 +73,33 @@ function Sidebar() {
             <Link
               key={item.name}
               to={item.path}
-              className={`group flex items-center px-4 py-3 mx-4 rounded-xl transition-all duration-200 ${isActive ? 'bg-blue-500/15 text-blue-400 font-semibold shadow-sm' : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-medium'
+              className={`group flex items-center justify-between px-4 py-3 mx-4 rounded-lg transition-all duration-200 ${isActive ? 'bg-primary text-on-primary font-medium' : 'hover:bg-surface-soft text-body font-medium'
                 }`}
             >
-              <Icon className={`w-5 h-5 mr-3 transition-colors ${isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
-              <span>{item.name}</span>
+              <div className="flex items-center">
+                <Icon className={`w-5 h-5 mr-3 transition-colors ${isActive ? 'text-on-primary' : 'text-muted group-hover:text-ink'}`} />
+                <span>{item.name}</span>
+              </div>
+              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border opacity-60 ${isActive ? 'border-on-primary/30 text-on-primary' : 'border-hairline text-muted'}`}>
+                ^{item.shortcut}
+              </span>
             </Link>
           );
         })}
       </nav>
       {user && (
-        <div className="p-4 border-t border-slate-800 bg-slate-900/50 shrink-0">
+        <div className="p-4 border-t border-hairline bg-surface-soft shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-bold uppercase mr-3 border border-slate-700">
+              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold uppercase mr-3">
                 {user.username.charAt(0)}
               </div>
               <div>
-                <p className="text-sm font-bold text-white leading-none">{user.username}</p>
-                <p className="text-xs text-slate-400 capitalize mt-1">{user.role}</p>
+                <p className="text-sm font-bold text-ink leading-none">{user.username}</p>
+                <p className="text-xs text-muted capitalize mt-1">{user.role}</p>
               </div>
             </div>
-            <button onClick={logout} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors" title="Log out">
+            <button onClick={logout} className="p-2 text-muted hover:text-ink hover:bg-canvas rounded-md transition-colors border border-transparent hover:border-hairline" title="Log out">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></svg>
             </button>
           </div>
@@ -101,7 +121,7 @@ function MainLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
+    <div className="flex h-screen bg-canvas font-sans overflow-hidden text-body">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <Routes>
