@@ -1,0 +1,168 @@
+Electrical Shop Management Software
+We are planning to develop a complete Electrical Shop Management Software to help
+you manage your day-to-day business operations easily from a single system.
+The software will cover Purchase, Stock, Sales, Customer & Supplier Accounts,
+Payments, Returns, Expenses, and Business Reports.
+
+1. Product Management
+You can maintain all your electrical products in one place.
+ Product Name
+ Category
+ Brand
+ Product Code
+ Model / Specification
+ HSN Code
+ GST Percentage
+ Purchase Price
+ Selling Price
+ MRP
+ Unit – Piece, Box, Meter, Roll, etc.
+ Minimum Stock Level
+
+2. Purchase Management
+You can record and manage all purchases made from suppliers.
+ Supplier Details
+ Purchase Invoice Number
+ Purchase Date
+ Product & Quantity
+ Purchase Rate
+ GST & Discount
+ Total Purchase Amount
+ Paid / Unpaid / Partially Paid
+ Supplier Outstanding
+ Purchase Return
+
+3. Stock Management
+The software will automatically maintain your product stock based on purchases and
+sales.
+ Opening Stock
+ Current Stock
+ Stock In / Stock Out
+ Low Stock Alert
+ Out-of-Stock Alert
+ Damaged Stock
+ Stock Adjustment
+ Stock History
+ Product-wise Stock Report
+For products such as wires and cables, quantity can also be maintained based on
+units such as meters, rolls, etc.
+
+4. Sales & Billing
+You can create professional sales bills quickly and easily.
+ Customer Selection
+ Product Selection
+ Quantity
+ Discount
+ GST
+ Total Amount
+ Cash / UPI / Card / Credit Payment
+ Invoice Generation
+ Bill Printing
+ Sales History
+ Sales Return
+
+5. Customer Management
+You can maintain complete records of your regular customers.
+ Customer Name
+ Mobile Number
+ Address
+ GSTIN
+ Purchase History
+ Total Purchase Amount
+ Paid Amount
+ Pending Amount
+ Customer-wise Transactions
+
+6. Supplier Management
+All supplier information and transactions can be maintained in one place.
+ Supplier Details
+ Purchase History
+ Payment History
+ Pending Amount
+ Supplier-wise Purchase Reports
+
+7. Payments & Outstanding
+The system will help you easily track both customer receivables and supplier
+payables.
+For example:
+Customer: ABC Electrical Contractor
+Total Purchase: ₹25,000
+Paid: ₹15,000
+Balance: ₹10,000
+You can record:
+ Full Payment
+ Partial Payment
+ Credit Sales
+ Customer Outstanding
+ Supplier Outstanding
+ Payment History
+ Due Amount
+
+8. Returns Management
+Separate return management will be available for both sales and purchases.
+Sales Return:
+When a customer returns a product, the stock will be updated accordingly.
+Purchase Return:
+When damaged or unwanted products are returned to the supplier, the stock and
+purchase records will be updated.
+
+9. Expense Management
+You can maintain your regular shop expenses.
+ Rent
+ Electricity Bill
+ Salary
+ Transport
+ Maintenance
+ Other Business Expenses
+This will help you understand your overall business expenses.
+
+10. Reports & Dashboard
+The dashboard will give you a quick overview of your business.
+Dashboard:
+ Today's Sales
+ Today's Purchase
+ Cash Collection
+ UPI Collection
+ Credit Sales
+ Total Expenses
+ Current Stock
+ Customer Outstanding
+ Supplier Outstanding
+Reports:
+ Daily Sales Report
+ Monthly Sales Report
+ Purchase Report
+ Stock Report
+ Profit Report
+ Customer Outstanding Report
+ Supplier Outstanding Report
+ Payment Method Report
+ Product-wise Sales Report
+ GST Report
+
+11. User & Staff Management
+If multiple staff members are using the software, different access levels can be
+provided.
+For example:
+Admin: Complete access
+Billing Staff: Sales & Billing
+Stock Staff: Purchase & Stock
+This will help you control and monitor staff activities.
+
+12. Backup & Data Security
+Since this is an offline software, proper data backup will be provided.
+ Automatic Backup
+ Manual Backup
+ Data Restore
+ Database Security
+ Data Recovery Support
+
+Overall Purpose
+The main purpose of this software is to make your electrical shop management
+simple, organized, and easy to track.
+Instead of maintaining separate notebooks or Excel files for purchases, sales, stock,
+customers, suppliers, payments, and expenses, everything can be managed from
+one single software system.
+The system will also provide proper reports so that you can easily understand your
+sales, stock, pending payments, purchases, expenses, and overall business
+performance.
