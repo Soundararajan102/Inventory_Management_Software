@@ -329,6 +329,8 @@ export interface DashboardStats {
   totalReceivables: number;
   totalPayables: number;
   totalExpenses: number;
+  totalSales: number;
+  netProfit: number;
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -352,13 +354,30 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const expenses = await db.select<{amount: number}[]>('SELECT amount FROM expenses');
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
   
+  // Total Sales
+  const sales = await db.select<{net_amount: number}[]>('SELECT net_amount FROM sales');
+  const totalSales = sales.reduce((sum, s) => sum + s.net_amount, 0);
+  
+  // Gross Profit = (Selling Price - Purchase Price) * Qty
+  const profitData = await db.select<{profit: number}[]>(`
+    SELECT ((si.unit_price - p.purchase_price) * si.quantity) as profit 
+    FROM sale_items si 
+    JOIN products p ON si.product_id = p.id
+  `);
+  const grossProfit = profitData.reduce((sum, row) => sum + (row.profit || 0), 0);
+  
+  // Net Profit = Gross Profit - Expenses
+  const netProfit = grossProfit - totalExpenses;
+  
   return {
     totalProducts,
     lowStockItems,
     totalInventoryValue,
     totalReceivables,
     totalPayables,
-    totalExpenses
+    totalExpenses,
+    totalSales,
+    netProfit
   };
 }
 

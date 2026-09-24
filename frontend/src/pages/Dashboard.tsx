@@ -1,4 +1,4 @@
-import { IndianRupee, TrendingUp, AlertCircle, ShoppingBag, Package, Receipt, Truck } from 'lucide-react';
+import { IndianRupee, TrendingUp, AlertCircle, ShoppingBag, Package, Receipt, Truck, LineChart } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { getDashboardStats } from '../lib/db';
 import type { DashboardStats } from '../lib/db';
@@ -26,6 +26,18 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
+        <StatCard 
+          title="Net Profit" 
+          value={stats ? `₹${stats.netProfit.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          icon={LineChart} 
+          color={stats && stats.netProfit >= 0 ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"} 
+        />
+        <StatCard 
+          title="Total Sales" 
+          value={stats ? `₹${stats.totalSales.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          icon={IndianRupee} 
+          color="bg-blue-100 text-blue-600" 
+        />
         <StatCard 
           title="Inventory Value" 
           value={stats ? `₹${stats.totalInventoryValue.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
