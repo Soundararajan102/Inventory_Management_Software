@@ -39,7 +39,17 @@ function Sidebar() {
 
   const visibleMenuItems = navItems.filter(item => user && (user.role === 'admin' || (user.permissions && user.permissions.includes(item.path))));
 
+  const [showShortcuts, setShowShortcuts] = useState(() => {
+    return localStorage.getItem('hideShortcuts') !== 'true';
+  });
+
   useEffect(() => {
+    const handleStorage = () => {
+      setShowShortcuts(localStorage.getItem('hideShortcuts') !== 'true');
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('preferencesUpdated', handleStorage);
+    
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey) {
         const item = visibleMenuItems.find(i => i.shortcut === e.key);
@@ -50,18 +60,20 @@ function Sidebar() {
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('preferencesUpdated', handleStorage);
+    };
   }, [navigate, visibleMenuItems]);
 
   return (
     <div className="w-64 bg-canvas text-body flex flex-col h-full border-r border-hairline z-10">
       <div className="p-6 shrink-0">
         <h1 className="text-2xl font-bold tracking-tight text-ink flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-sm">
-            <span className="text-on-primary font-bold text-lg leading-none">E</span>
-          </div>
+          <img src="/logo.png" alt="Electro Hub Logo" className="w-8 h-8 rounded-lg shadow-sm object-cover" />
           <span className="flex flex-col gap-0 leading-tight">
-            Electrical<span className="text-muted text-sm font-medium">Shop</span>
+            Electro<span className="text-muted text-sm font-medium">Hub</span>
           </span>
         </h1>
       </div>
@@ -80,9 +92,11 @@ function Sidebar() {
                 <Icon className={`w-5 h-5 mr-3 transition-colors ${isActive ? 'text-on-primary' : 'text-muted group-hover:text-ink'}`} />
                 <span>{item.name}</span>
               </div>
-              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border opacity-60 ${isActive ? 'border-on-primary/30 text-on-primary' : 'border-hairline text-muted'}`}>
-                ^{item.shortcut}
-              </span>
+              {showShortcuts && (
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border opacity-60 ${isActive ? 'border-on-primary/30 text-on-primary' : 'border-hairline text-muted'}`}>
+                  ^{item.shortcut}
+                </span>
+              )}
             </Link>
           );
         })}

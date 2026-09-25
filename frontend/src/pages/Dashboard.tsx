@@ -41,8 +41,8 @@ export default function Dashboard() {
   return (
     <div className="p-8 h-full flex flex-col bg-canvas overflow-y-auto">
       <header className="mb-8">
-        <h1 className="text-3xl font-bold text-ink tracking-tight">Business Dashboard</h1>
-        <p className="text-muted mt-1">Real-time overview of your business metrics</p>
+        <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Business Dashboard</h1>
+        <p className="text-base text-body mt-2">Real-time overview of your business metrics</p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
@@ -96,15 +96,15 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="bg-canvas rounded-xl shadow-none border border-hairline p-6 flex-1">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-ink">Quick Actions</h2>
+      <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 flex-1">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-ink">Quick Actions</h2>
           <button 
             onClick={() => {
               setTempSelected(selectedActions);
               setIsEditModalOpen(true);
             }}
-            className="text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1 text-sm font-medium"
+            className="text-muted hover:text-primary transition-colors flex items-center gap-1 text-sm font-medium"
           >
             <Settings className="w-4 h-4" /> Edit
           </button>
@@ -112,14 +112,14 @@ export default function Dashboard() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {ALL_QUICK_ACTIONS.filter(a => selectedActions.includes(a.id)).map(action => (
-            <Link key={action.id} to={action.to} className={`p-6 border border-slate-100 rounded-xl bg-slate-50 ${action.bgHover} ${action.borderHover} transition-colors cursor-pointer flex flex-col items-center justify-center text-center group`}>
+            <Link key={action.id} to={action.to} className={`p-6 border border-hairline rounded-xl bg-canvas shadow-sm hover:shadow-md ${action.bgHover} transition-all cursor-pointer flex flex-col items-center justify-center text-center group`}>
                <action.icon className={`w-10 h-10 ${action.iconColor} mb-3 group-hover:scale-110 transition-transform`} />
-               <h3 className="font-bold text-slate-800">{action.title}</h3>
-               <p className="text-sm text-slate-500 mt-1">{action.desc}</p>
+               <h3 className="font-bold text-ink">{action.title}</h3>
+               <p className="text-sm text-muted mt-1">{action.desc}</p>
             </Link>
           ))}
           {selectedActions.length === 0 && (
-            <div className="col-span-full p-8 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
+            <div className="col-span-full p-8 text-center text-muted border-2 border-dashed border-hairline rounded-xl">
               No quick actions selected. Click Edit to add some!
             </div>
           )}
@@ -127,22 +127,22 @@ export default function Dashboard() {
       </div>
 
       {isEditModalOpen && (
-        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-slate-500" /> Customize Actions
+        <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-hairline animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-5 border-b border-hairline flex justify-between items-center bg-surface-soft">
+              <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                <Settings className="w-5 h-5 text-muted" /> Customize Actions
               </h2>
-              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors bg-white rounded-full p-1 shadow-sm">
+              <button onClick={() => setIsEditModalOpen(false)} className="text-muted hover:text-ink transition-colors p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
             <div className="p-6 max-h-[60vh] overflow-y-auto">
-              <p className="text-sm text-slate-500 mb-4">Select the shortcuts you want to appear on your dashboard.</p>
+              <p className="text-sm text-body mb-4">Select the shortcuts you want to appear on your dashboard.</p>
               <div className="space-y-3">
                 {ALL_QUICK_ACTIONS.map(action => (
-                  <label key={action.id} className="flex items-center gap-3 p-3 border border-slate-200 rounded-xl hover:bg-slate-50 cursor-pointer transition-colors">
+                  <label key={action.id} className="flex items-center gap-3 p-3 border border-hairline rounded-xl hover:bg-surface-soft cursor-pointer transition-colors shadow-sm">
                     <input 
                       type="checkbox" 
                       checked={tempSelected.includes(action.id)}
@@ -150,12 +150,12 @@ export default function Dashboard() {
                         if (e.target.checked) setTempSelected([...tempSelected, action.id]);
                         else setTempSelected(tempSelected.filter(id => id !== action.id));
                       }}
-                      className="w-5 h-5 rounded text-blue-600 border-gray-300 focus:ring-blue-500"
+                      className="w-5 h-5 rounded text-primary border-hairline focus:ring-primary"
                     />
                     <div className="flex items-center gap-3 flex-1">
                       <action.icon className={`w-5 h-5 ${action.iconColor}`} />
                       <div className="flex flex-col">
-                        <span className="font-bold text-slate-800 text-sm">{action.title}</span>
+                        <span className="font-bold text-ink text-sm">{action.title}</span>
                       </div>
                     </div>
                   </label>
@@ -190,7 +190,7 @@ export default function Dashboard() {
 
 function StatCard({ title, value, icon: Icon, color }: { title: string, value: string, icon: any, color: string }) {
   return (
-    <div className="bg-canvas rounded-xl shadow-none border border-hairline p-6 flex items-center">
+    <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 flex items-center">
       <div className={`p-4 rounded-full mr-4 ${color}`}>
         <Icon className="w-6 h-6" />
       </div>

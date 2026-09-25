@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Search, Printer, IndianRupee, X, Plus, Minus, ShoppingCart, User } from 'lucide-react';
-import { getProducts, getCustomers, recordSale } from '../lib/db';
+import { Search, IndianRupee, X, Plus, Minus, ShoppingCart, User } from 'lucide-react';
+import { getSellableProducts, getCustomers, recordSale } from '../lib/db';
 import type { Product, CartItem, Customer } from '../lib/db';
 
 export default function POS() {
@@ -11,7 +11,6 @@ export default function POS() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<number>(0);
   const [discountType, setDiscountType] = useState<'amount' | 'percentage'>('amount');
-  const [isGstEnabled, setIsGstEnabled] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   
   const [customerId, setCustomerId] = useState<number | ''>('');
@@ -23,7 +22,7 @@ export default function POS() {
 
   async function loadProducts() {
     try {
-      const data = await getProducts();
+      const data = await getSellableProducts();
       setProducts(data);
       const custData = await getCustomers();
       setCustomers(custData);
@@ -93,7 +92,6 @@ export default function POS() {
       setCart([]);
       setDiscount(0);
       setDiscountType('amount');
-      setIsGstEnabled(true);
       setCustomerId('');
       setPaidAmount('');
       loadProducts(); // refresh stock limits and customer balances
@@ -106,7 +104,7 @@ export default function POS() {
   }
 
   const subtotal = cart.reduce((sum, item) => sum + (item.selling_price * item.cart_qty), 0);
-  const tax = isGstEnabled ? subtotal * 0.18 : 0; // Flat 18% GST example
+  const tax = cart.reduce((sum, item) => sum + (item.selling_price * item.cart_qty * ((item.gst_percentage || 0) / 100)), 0);
   const discountAmount = discountType === 'percentage' ? (subtotal * discount) / 100 : discount;
   const grandTotal = Math.max(0, subtotal + tax - discountAmount);
 
@@ -210,7 +208,10 @@ export default function POS() {
                 <div className="flex justify-between items-start mb-3">
                   <div className="flex-1 pr-2">
                     <h3 className="text-sm font-medium text-ink leading-tight">{item.name}</h3>
-                    <div className="text-xs text-muted mt-1">₹{item.selling_price.toFixed(2)} / {item.unit}</div>
+                    <div className="text-xs text-muted mt-1">
+                      ₹{item.selling_price.toFixed(2)} / {item.unit}
+                      <span className="ml-2 text-primary font-medium">GST: {item.gst_percentage || 0}%</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-ink text-sm">₹{(item.selling_price * item.cart_qty).toFixed(2)}</span>
@@ -244,16 +245,7 @@ export default function POS() {
               <span className="font-medium text-ink">₹{subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center text-sm text-body">
-              <div className="flex items-center gap-2">
-                <span>GST (18%)</span>
-                <button 
-                  onClick={() => setIsGstEnabled(!isGstEnabled)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${isGstEnabled ? 'bg-primary' : 'bg-surface-strong'}`}
-                  title="Toggle GST"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-canvas transition-transform ${isGstEnabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
+              <span>Tax (GST)</span>
               <span className="font-medium text-ink">₹{tax.toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center text-sm text-body py-1">
@@ -310,19 +302,13 @@ export default function POS() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <button 
               onClick={handleCheckout}
-              disabled={cart.length === 0 || isProcessing}
-              className={`col-span-2 font-medium py-3 rounded-lg flex justify-center items-center text-base transition-colors ${cart.length === 0 || isProcessing ? 'bg-surface-strong text-muted cursor-not-allowed' : 'bg-primary hover:bg-primary-active text-on-primary'}`}
+              disabled={cart.length === 0 || isProcessing || (Number(paidAmount !== '' ? paidAmount : grandTotal) < grandTotal && customerId === '')}
+              className={`font-medium py-3 rounded-lg flex justify-center items-center text-base transition-colors ${(cart.length === 0 || isProcessing || (Number(paidAmount !== '' ? paidAmount : grandTotal) < grandTotal && customerId === '')) ? 'bg-surface-strong text-muted cursor-not-allowed' : 'bg-primary hover:bg-primary-active text-on-primary'}`}
             >
-              <IndianRupee className="w-4 h-4 mr-2" /> {isProcessing ? 'Processing...' : 'Pay & Print'}
-            </button>
-            <button 
-              disabled={cart.length === 0}
-              className={`border font-medium py-3 rounded-sm flex justify-center items-center transition-colors text-sm ${cart.length === 0 ? 'border-transparent text-muted bg-canvas' : 'bg-canvas border-hairline text-ink hover:bg-surface-soft'}`}
-            >
-              <Printer className="w-4 h-4 mr-2" /> Invoice
+              <IndianRupee className="w-4 h-4 mr-2" /> {isProcessing ? 'Processing...' : 'Complete Sale'}
             </button>
             <button 
               onClick={() => setCart([])}

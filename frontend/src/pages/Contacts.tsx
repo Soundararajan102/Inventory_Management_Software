@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Search, Plus, X, Users, Truck } from 'lucide-react';
-import { getCustomers, addCustomer, getSuppliers, addSupplier } from '../lib/db';
+import { getCustomers, addCustomer, editCustomer, getSuppliers, addSupplier, editSupplier } from '../lib/db';
 import type { Customer, Supplier } from '../lib/db';
+import { Pencil } from 'lucide-react';
 
 export default function Contacts() {
   const [activeTab, setActiveTab] = useState<'customers' | 'suppliers'>('customers');
   const [search, setSearch] = useState('');
-  
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  
+
   const [isModalOpen, setIsModalOpen] = useState(false);
-  
+  const [editingId, setEditingId] = useState<number | null>(null);
+
   // Form State
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -36,26 +38,49 @@ export default function Contacts() {
     e.preventDefault();
     try {
       if (activeTab === 'customers') {
-        await addCustomer(name, phone, email, address, gstin);
+        if (editingId) {
+          await editCustomer(editingId, name, phone, email, address, gstin);
+        } else {
+          await addCustomer(name, phone, email, address, gstin);
+        }
       } else {
-        await addSupplier(name, phone, email, address, gstin);
+        if (editingId) {
+          await editSupplier(editingId, name, phone, email, address, gstin);
+        } else {
+          await addSupplier(name, phone, email, address, gstin);
+        }
       }
-      setIsModalOpen(false);
-      setName(''); setPhone(''); setEmail(''); setAddress(''); setGstin('');
+      closeModal();
       loadData();
     } catch (error) {
-      console.error("Failed to add contact", error);
-      alert(`Error adding contact: ${error}`);
+      console.error("Failed to save contact", error);
+      alert(`Error saving contact: ${error}`);
     }
   }
 
-  const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(search.toLowerCase()) || 
+  function openEditModal(contact: Customer | Supplier) {
+    setEditingId(contact.id);
+    setName(contact.name);
+    setPhone(contact.phone || '');
+    setEmail(contact.email || '');
+    setAddress(contact.address || '');
+    setGstin(contact.gstin || '');
+    setIsModalOpen(true);
+  }
+
+  function closeModal() {
+    setIsModalOpen(false);
+    setEditingId(null);
+    setName(''); setPhone(''); setEmail(''); setAddress(''); setGstin('');
+  }
+
+  const filteredCustomers = customers.filter(c =>
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
     (c.phone && c.phone.includes(search))
   );
 
-  const filteredSuppliers = suppliers.filter(s => 
-    s.name.toLowerCase().includes(search.toLowerCase()) || 
+  const filteredSuppliers = suppliers.filter(s =>
+    s.name.toLowerCase().includes(search.toLowerCase()) ||
     (s.phone && s.phone.includes(search))
   );
 
@@ -66,27 +91,27 @@ export default function Contacts() {
           <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Contacts Management</h1>
           <p className="text-base text-body mt-2">Manage your customers and suppliers in one place.</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-primary hover:bg-primary-active text-on-primary px-6 py-3 rounded-lg font-medium shadow-none flex items-center transition-colors"
+        <button
+          onClick={() => { closeModal(); setIsModalOpen(true); }}
+          className="bg-primary hover:bg-primary-active text-on-primary px-6 py-3 rounded-lg font-medium shadow-md hover:shadow-lg flex items-center transition-all"
         >
           <Plus className="w-5 h-5 mr-2" />
           Add {activeTab === 'customers' ? 'Customer' : 'Supplier'}
         </button>
       </header>
 
-      <div className="bg-canvas rounded-lg border border-hairline flex-1 flex flex-col overflow-hidden">
+      <div className="bg-canvas rounded-xl shadow-sm border border-hairline flex-1 flex flex-col overflow-hidden">
         {/* Toolbar & Tabs */}
         <div className="p-4 border-b border-hairline flex justify-between items-center bg-canvas">
           <div className="flex gap-2">
-            <button 
+            <button
               onClick={() => setActiveTab('customers')}
               className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'customers' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
             >
               <Users className="w-4 h-4 mr-2" />
               Customers
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('suppliers')}
               className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'suppliers' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
             >
@@ -97,10 +122,10 @@ export default function Contacts() {
 
           <div className="relative w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted w-4 h-4" />
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder={`Search ${activeTab}...`}
-              className="w-full pl-9 pr-4 py-2 bg-canvas border border-hairline rounded-sm shadow-none focus:outline-none focus:border-ink transition-colors text-ink placeholder-muted text-sm"
+              className="w-full pl-9 pr-4 py-2 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted text-sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -116,6 +141,7 @@ export default function Contacts() {
                 <th className="px-6 py-4">Contact Info</th>
                 <th className="px-6 py-4">GSTIN</th>
                 <th className="px-6 py-4 text-right">Outstanding Balance (₹)</th>
+                <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-hairline">
@@ -138,11 +164,20 @@ export default function Contacts() {
                       ₹{contact.balance.toFixed(2)}
                     </span>
                   </td>
+                  <td className="px-6 py-4 text-right">
+                    <button
+                      onClick={() => openEditModal(contact)}
+                      className="text-slate-400 hover:text-blue-600 transition-colors"
+                      title="Edit Contact"
+                    >
+                      <Pencil className="w-5 h-5 inline-block" />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {(activeTab === 'customers' ? filteredCustomers : filteredSuppliers).length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-16 text-center text-muted">
+                  <td colSpan={5} className="p-16 text-center text-muted">
                     <div className="flex flex-col items-center justify-center">
                       <div className="w-16 h-16 bg-surface-soft border border-hairline rounded-full flex items-center justify-center mb-4">
                         {activeTab === 'customers' ? <Users className="w-6 h-6 text-muted" /> : <Truck className="w-6 h-6 text-muted" />}
@@ -161,10 +196,10 @@ export default function Contacts() {
       {/* Add Contact Modal */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-canvas rounded-lg shadow-xl w-full max-w-md overflow-hidden border border-hairline">
+          <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-hairline">
             <div className="px-6 py-5 border-b border-hairline flex justify-between items-center bg-surface-soft">
-              <h2 className="text-lg font-medium text-ink">Add New {activeTab === 'customers' ? 'Customer' : 'Supplier'}</h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-muted hover:text-ink transition-colors p-1">
+              <h2 className="text-lg font-medium text-ink">{editingId ? 'Edit' : 'Add New'} {activeTab === 'customers' ? 'Customer' : 'Supplier'}</h2>
+              <button onClick={closeModal} className="text-muted hover:text-ink transition-colors p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -191,10 +226,10 @@ export default function Contacts() {
                 <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Full Address</label>
                 <textarea rows={3} value={address} onChange={e => setAddress(e.target.value)} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm resize-none" placeholder="123 Street Name, City, State, PIN" />
               </div>
-              
+
               <div className="mt-6 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-ink font-medium bg-canvas border border-hairline hover:bg-surface-soft rounded-sm transition-colors text-sm">Cancel</button>
-                <button type="submit" className="px-6 py-2 bg-primary hover:bg-primary-active text-on-primary font-medium rounded-lg transition-colors text-sm">Save {activeTab === 'customers' ? 'Customer' : 'Supplier'}</button>
+                <button type="button" onClick={closeModal} className="px-4 py-2 text-ink font-medium bg-canvas border border-hairline hover:bg-surface-soft rounded-sm transition-colors text-sm">Cancel</button>
+                <button type="submit" className="px-6 py-2 bg-primary hover:bg-primary-active text-on-primary font-medium rounded-lg shadow-sm hover:shadow-md transition-all text-sm">{editingId ? 'Update' : 'Save'} {activeTab === 'customers' ? 'Customer' : 'Supplier'}</button>
               </div>
             </form>
           </div>

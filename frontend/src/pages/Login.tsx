@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { Lock, User, KeyRound, X } from 'lucide-react';
+import { User, KeyRound, X } from 'lucide-react';
 import { getDb } from '../lib/db';
 import * as OTPAuth from 'otpauth';
 
@@ -55,13 +55,17 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-canvas p-4">
-      <div className="max-w-md w-full bg-canvas rounded-lg border border-hairline overflow-hidden shadow-none">
+    <div className="min-h-screen flex items-center justify-center bg-surface-soft p-4 relative overflow-hidden">
+      {/* Decorative background elements for premium feel */}
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/5 blur-[100px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[120px] pointer-events-none" />
+
+      <div className="max-w-md w-full bg-canvas rounded-xl border border-hairline overflow-hidden shadow-2xl">
         <div className="p-10 text-center border-b border-hairline bg-surface-soft">
-          <div className="w-16 h-16 bg-canvas border border-hairline rounded-full flex items-center justify-center mx-auto mb-5 shadow-sm">
-            <Lock className="w-6 h-6 text-ink" />
+          <div className="w-16 h-16 mx-auto mb-5 shadow-sm rounded-2xl overflow-hidden border border-hairline bg-canvas">
+            <img src="/logo.png" alt="Electro Hub Logo" className="w-full h-full object-cover p-1" />
           </div>
-          <h1 className="text-3xl font-display font-medium text-ink tracking-tight">Electrical POS</h1>
+          <h1 className="text-3xl font-display font-medium text-ink tracking-tight">Electro Hub</h1>
           <p className="text-body mt-2 text-base">Sign in to your account</p>
         </div>
         
@@ -79,7 +83,7 @@ export default function Login() {
               <select
                 value={selectedUsername}
                 onChange={(e) => setSelectedUsername(e.target.value)}
-                className="w-full pl-9 pr-4 py-3 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors font-medium text-ink appearance-none text-sm"
+                className="w-full pl-9 pr-4 py-3 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors font-medium text-ink appearance-none text-sm"
               >
                 {usernames.map(u => (
                   <option key={u} value={u}>{u}</option>
@@ -96,7 +100,7 @@ export default function Login() {
               pattern="[0-9]*"
               value={pin}
               onChange={(e) => setPin(e.target.value)}
-              className="w-full px-4 py-3 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors font-medium text-center text-xl tracking-[0.5em] text-ink placeholder-muted"
+              className="w-full px-4 py-3 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors font-medium text-center text-xl tracking-[0.5em] text-ink placeholder-muted"
               placeholder="••••"
               required
             />
@@ -105,10 +109,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={isLoading || pin.length === 0}
-            className={`w-full py-3.5 rounded-lg font-medium transition-colors
-              ${isLoading || pin.length === 0 
-                ? 'bg-surface-soft text-muted border border-hairline cursor-not-allowed' 
-                : 'bg-primary hover:bg-primary-active text-on-primary shadow-none'}`}
+            className="w-full py-3.5 rounded-lg font-medium transition-all bg-primary text-on-primary shadow-md hover:shadow-lg hover:bg-primary-active disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
           >
             {isLoading ? 'Verifying...' : 'Unlock System'}
           </button>
@@ -131,7 +132,7 @@ export default function Login() {
 
       {showForgotPin && (
         <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="bg-canvas rounded-lg shadow-xl max-w-sm w-full overflow-hidden border border-hairline animate-in zoom-in-95">
+          <div className="bg-canvas rounded-xl shadow-2xl max-w-sm w-full overflow-hidden border border-hairline animate-in zoom-in-95">
             <div className="p-6 border-b border-hairline flex justify-between items-center bg-surface-soft">
               <div className="flex items-center gap-3 text-ink">
                 <KeyRound className="w-5 h-5 text-muted" />
@@ -160,7 +161,7 @@ export default function Login() {
                       setSelectedUsername('Admin');
                       setPin('');
                     }}
-                    className="mt-6 w-full py-2.5 bg-primary text-on-primary font-medium rounded-lg hover:bg-primary-active transition-colors"
+                    className="mt-6 w-full py-2.5 bg-primary text-on-primary font-medium rounded-lg shadow-sm hover:shadow-md hover:bg-primary-active transition-all"
                   >
                     Back to Login
                   </button>
@@ -185,7 +186,7 @@ export default function Login() {
                     value={resetToken}
                     onChange={(e) => setResetToken(e.target.value.replace(/\D/g, ''))}
                     placeholder="123456"
-                    className="w-full text-center text-3xl font-mono tracking-widest p-4 border border-hairline rounded-sm focus:outline-none focus:border-ink bg-canvas mb-6 text-ink placeholder-muted"
+                    className="w-full text-center text-3xl font-mono tracking-widest p-4 border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary bg-canvas mb-6 text-ink placeholder-muted"
                   />
                   
                   <button
@@ -196,7 +197,7 @@ export default function Login() {
                       }
 
                       let totp = new OTPAuth.TOTP({
-                        issuer: "Electrical Shop",
+                        issuer: "Electro Hub",
                         label: "Admin",
                         algorithm: "SHA1",
                         digits: 6,
@@ -221,7 +222,7 @@ export default function Login() {
                       }
                     }}
                     disabled={resetToken.length !== 6}
-                    className="w-full py-3 bg-primary text-on-primary font-medium rounded-lg hover:bg-primary-active transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full py-3 bg-primary text-on-primary font-medium rounded-lg shadow-sm hover:shadow-md hover:bg-primary-active transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
                   >
                     Verify & Reset PIN
                   </button>

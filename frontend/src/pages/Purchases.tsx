@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search, Plus, Minus, X, Truck, FileText, IndianRupee } from 'lucide-react';
-import { getProducts, getSuppliers, recordPurchase } from '../lib/db';
+import { getSellableProducts, getSuppliers, recordPurchase } from '../lib/db';
 import type { Product, Supplier, PurchaseItem } from '../lib/db';
 
 export default function Purchases() {
@@ -14,7 +14,6 @@ export default function Purchases() {
   
   const [discount, setDiscount] = useState<number>(0);
   const [discountType, setDiscountType] = useState<'amount' | 'percentage'>('amount');
-  const [isGstEnabled, setIsGstEnabled] = useState(true);
   const [paidAmount, setPaidAmount] = useState<number>(0);
   
   const [isProcessing, setIsProcessing] = useState(false);
@@ -25,7 +24,7 @@ export default function Purchases() {
 
   async function loadData() {
     try {
-      setProducts(await getProducts());
+      setProducts(await getSellableProducts());
       setSuppliers(await getSuppliers());
     } catch (e) {
       console.error(e);
@@ -72,7 +71,7 @@ export default function Purchases() {
   }
 
   const subtotal = cart.reduce((sum, item) => sum + (item.purchase_price * item.purchase_qty), 0);
-  const tax = isGstEnabled ? subtotal * 0.18 : 0; // Simple 18% assumption for demo
+  const tax = cart.reduce((sum, item) => sum + (item.purchase_price * item.purchase_qty * ((item.gst_percentage || 0) / 100)), 0);
   const discountAmount = discountType === 'percentage' ? (subtotal * discount) / 100 : discount;
   const grandTotal = Math.max(0, subtotal + tax - discountAmount);
 
@@ -108,7 +107,6 @@ export default function Purchases() {
       setInvoiceNo('');
       setDiscount(0);
       setDiscountType('amount');
-      setIsGstEnabled(true);
       setPaidAmount(0);
       loadData();
     } catch (error) {
@@ -213,6 +211,9 @@ export default function Purchases() {
               <div className="flex justify-between items-start mb-3">
                 <div className="flex-1 pr-2">
                   <h3 className="text-sm font-medium text-ink leading-tight">{item.name}</h3>
+                  <div className="text-xs text-muted mt-1">
+                    <span className="text-primary font-medium">GST: {item.gst_percentage || 0}%</span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-ink text-sm">₹{(item.purchase_price * item.purchase_qty).toFixed(2)}</span>
@@ -253,16 +254,7 @@ export default function Purchases() {
               <span className="font-medium text-ink">₹{subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between items-center text-sm text-body">
-              <div className="flex items-center gap-2">
-                <span>GST (18%)</span>
-                <button 
-                  onClick={() => setIsGstEnabled(!isGstEnabled)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${isGstEnabled ? 'bg-primary' : 'bg-surface-strong'}`}
-                  title="Toggle GST"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-canvas transition-transform ${isGstEnabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
+              <span>Tax (GST)</span>
               <span className="font-medium text-ink">₹{tax.toFixed(2)}</span>
             </div>
             

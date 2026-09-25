@@ -202,6 +202,50 @@ pub fn run() {
       );
       ",
       kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 11,
+      description: "add_unit_to_items",
+      sql: "
+      ALTER TABLE sale_items ADD COLUMN unit TEXT DEFAULT 'Piece';
+      UPDATE sale_items SET unit = (SELECT unit FROM products WHERE products.id = sale_items.product_id);
+      ALTER TABLE purchase_items ADD COLUMN unit TEXT DEFAULT 'Piece';
+      UPDATE purchase_items SET unit = (SELECT unit FROM products WHERE products.id = purchase_items.product_id);
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 12,
+      description: "add_variants",
+      sql: "
+      ALTER TABLE products ADD COLUMN parent_id INTEGER;
+      ALTER TABLE products ADD COLUMN is_group BOOLEAN DEFAULT 0;
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 13,
+      description: "add_sales_invoice_number",
+      sql: "
+      ALTER TABLE sales ADD COLUMN invoice_number TEXT;
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 14,
+      description: "add_returns_transaction_id",
+      sql: "
+      ALTER TABLE returns ADD COLUMN transaction_id INTEGER;
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 15,
+      description: "add_gst_percentage_to_products",
+      sql: "
+      ALTER TABLE products ADD COLUMN gst_percentage REAL DEFAULT 18.0;
+      ",
+      kind: MigrationKind::Up,
     }
   ];
 

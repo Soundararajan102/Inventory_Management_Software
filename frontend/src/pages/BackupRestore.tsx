@@ -7,6 +7,20 @@ import { appDataDir, join } from '@tauri-apps/api/path';
 export default function BackupRestore() {
   const [status, setStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [hideShortcuts, setHideShortcuts] = useState(() => {
+    return localStorage.getItem('hideShortcuts') === 'true';
+  });
+
+  const toggleShortcuts = () => {
+    const newValue = !hideShortcuts;
+    setHideShortcuts(newValue);
+    if (newValue) {
+      localStorage.setItem('hideShortcuts', 'true');
+    } else {
+      localStorage.removeItem('hideShortcuts');
+    }
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
 
   const handleBackup = async () => {
     try {
@@ -87,20 +101,50 @@ export default function BackupRestore() {
   };
 
   return (
-    <div className="p-8 h-full bg-slate-50 flex flex-col items-center justify-center">
-      <div className="max-w-2xl w-full bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="bg-slate-800 p-8 text-center">
-          <div className="w-16 h-16 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-600">
-            <Database className="w-8 h-8 text-blue-400" />
+    <div className="p-8 h-full bg-canvas overflow-y-auto flex flex-col items-center">
+      <div className="max-w-3xl w-full flex flex-col pb-12 shrink-0">
+        <div className="w-full mb-12">
+          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Settings</h1>
+          <p className="text-base text-body mt-2">Manage your app preferences and database backups.</p>
+        </div>
+
+      <div className="max-w-3xl w-full bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden mb-8">
+        <div className="p-6 border-b border-hairline bg-surface-soft">
+          <h2 className="text-lg font-bold text-ink">User Preferences</h2>
+          <p className="text-sm text-muted mt-1">Customize your UI experience</p>
+        </div>
+        <div className="p-6">
+          <div className="flex items-center justify-between p-4 bg-canvas border border-hairline rounded-lg">
+            <div>
+              <p className="font-bold text-ink">Keyboard Shortcuts in Sidebar</p>
+              <p className="text-sm text-muted">Show the shortcut hints (^1, ^2) next to menu items</p>
+            </div>
+            <button
+              onClick={toggleShortcuts}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${!hideShortcuts ? 'bg-primary' : 'bg-surface-strong'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-canvas transition-transform ${!hideShortcuts ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Data Backup & Restore</h1>
-          <p className="text-slate-400 mt-2">Secure your data or restore from a previous backup</p>
+        </div>
+      </div>
+
+
+      <div className="max-w-3xl w-full bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
+        <div className="p-6 border-b border-hairline bg-surface-soft flex items-center gap-3">
+          <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+            <Database className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-ink">Data Backup & Restore</h2>
+            <p className="text-sm text-muted">Secure your data or restore from a previous backup</p>
+          </div>
         </div>
 
         <div className="p-8">
           {status && (
             <div className={`mb-8 p-4 rounded-xl border flex items-start ${
-              status.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'
+              status.type === 'success' ? 'bg-success/10 border-success/30 text-success' : 'bg-signature-coral/10 border-signature-coral/30 text-signature-coral'
             }`}>
               {status.type === 'error' && <AlertTriangle className="w-5 h-5 mr-3 shrink-0 mt-0.5" />}
               <p className="font-medium">{status.message}</p>
@@ -111,28 +155,29 @@ export default function BackupRestore() {
             <button
               onClick={handleBackup}
               disabled={isLoading}
-              className="group relative overflow-hidden bg-slate-50 border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-2xl p-8 flex flex-col items-center justify-center transition-all hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="group relative overflow-hidden bg-canvas border border-hairline hover:border-primary rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <Download className="w-6 h-6 text-blue-600" />
+              <div className="w-12 h-12 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <Download className="w-6 h-6" />
               </div>
-              <h2 className="text-lg font-bold text-slate-800">Create Backup</h2>
-              <p className="text-sm text-slate-500 text-center mt-2">Save a copy of your database to an external drive</p>
+              <h2 className="text-lg font-bold text-ink">Create Backup</h2>
+              <p className="text-sm text-muted text-center mt-2">Save a copy of your database to an external drive</p>
             </button>
 
             <button
               onClick={handleRestore}
               disabled={isLoading}
-              className="group relative overflow-hidden bg-slate-50 border-2 border-dashed border-slate-300 hover:border-red-500 rounded-2xl p-8 flex flex-col items-center justify-center transition-all hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="group relative overflow-hidden bg-canvas border border-hairline hover:border-signature-coral rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <Upload className="w-6 h-6 text-red-600" />
+              <div className="w-12 h-12 bg-signature-coral/10 text-signature-coral rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <Upload className="w-6 h-6" />
               </div>
-              <h2 className="text-lg font-bold text-slate-800">Restore Data</h2>
-              <p className="text-sm text-slate-500 text-center mt-2">Replace current data with a previous backup file</p>
+              <h2 className="text-lg font-bold text-ink">Restore Data</h2>
+              <p className="text-sm text-muted text-center mt-2">Replace current data with a previous backup file</p>
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
