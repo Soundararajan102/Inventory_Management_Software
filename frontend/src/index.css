@@ -48,3 +48,25 @@ body {
   background-color: var(--color-canvas);
   color: var(--color-body);
 }
+
+@media print {
+  @page {
+    margin: 0 !important;
+  }
+  
+  #root {
+    display: none !important;
+  }
+  
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    background: white;
+  }
+  
+  #printable-receipt {
+    display: block !important;
+    width: 100%;
+  }
+}

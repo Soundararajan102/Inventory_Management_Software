@@ -1,5 +1,6 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let migrations = vec![
@@ -246,6 +247,51 @@ pub fn run() {
       ALTER TABLE products ADD COLUMN gst_percentage REAL DEFAULT 18.0;
       ",
       kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 16,
+      description: "add_cgst_sgst_to_products",
+      sql: "
+      ALTER TABLE products ADD COLUMN cgst_percentage REAL DEFAULT 9.0;
+      ALTER TABLE products ADD COLUMN sgst_percentage REAL DEFAULT 9.0;
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 17,
+      description: "add_snapshots_to_transactions",
+      sql: "
+      ALTER TABLE sales ADD COLUMN customer_snapshot TEXT;
+      ALTER TABLE sale_items ADD COLUMN product_snapshot TEXT;
+      ALTER TABLE purchases ADD COLUMN supplier_snapshot TEXT;
+      ALTER TABLE purchase_items ADD COLUMN product_snapshot TEXT;
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 18,
+      description: "add_group_name_to_products",
+      sql: "
+      ALTER TABLE products ADD COLUMN group_name TEXT DEFAULT '';
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 19,
+      description: "add_groups_and_brands_tables",
+      sql: "
+      CREATE TABLE IF NOT EXISTS item_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+      );
+      CREATE TABLE IF NOT EXISTS brands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+      );
+      ALTER TABLE products ADD COLUMN group_id INTEGER;
+      ALTER TABLE products ADD COLUMN brand_id INTEGER;
+      ",
+      kind: MigrationKind::Up,
     }
   ];
 
@@ -256,6 +302,7 @@ pub fn run() {
     .plugin(tauri_plugin_sql::Builder::default()
       .add_migrations("sqlite:inventory.db", migrations)
       .build())
+    .invoke_handler(tauri::generate_handler![])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

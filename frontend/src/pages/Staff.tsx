@@ -117,14 +117,7 @@ export default function Staff() {
   }
 
   return (
-    <div className="p-8 h-full flex flex-col relative bg-canvas overflow-y-auto">
-      <header className="mb-12 flex justify-between items-end">
-        <div>
-          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Staff Management</h1>
-          <p className="text-base text-body mt-2">Manage user accounts and custom permissions.</p>
-        </div>
-      </header>
-
+    <div className="p-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1">
           <div className="bg-canvas p-6 rounded-lg border border-hairline">

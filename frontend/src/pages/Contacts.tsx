@@ -3,6 +3,7 @@ import { Search, Plus, X, Users, Truck } from 'lucide-react';
 import { getCustomers, addCustomer, editCustomer, getSuppliers, addSupplier, editSupplier } from '../lib/db';
 import type { Customer, Supplier } from '../lib/db';
 import { Pencil } from 'lucide-react';
+import { handleFormKeyDown } from '../lib/keyboard';
 
 export default function Contacts() {
   const [activeTab, setActiveTab] = useState<'customers' | 'suppliers'>('customers');
@@ -23,6 +24,16 @@ export default function Contacts() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   async function loadData() {
@@ -203,7 +214,7 @@ export default function Contacts() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleAddContact} className="p-6 flex flex-col gap-5 overflow-y-auto max-h-[80vh]">
+            <form onSubmit={handleAddContact} onKeyDown={handleFormKeyDown} className="p-6 flex flex-col gap-5 overflow-y-auto max-h-[80vh]">
               <div>
                 <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Name *</label>
                 <input required type="text" value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm" placeholder="Business or Person Name" />
