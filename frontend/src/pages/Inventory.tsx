@@ -623,24 +623,24 @@ export default function Inventory() {
               <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
                 
                 {/* Basic Info */}
-                <div className="grid grid-cols-4 gap-5">
+                <div className="grid grid-cols-5 gap-5">
                   <div className="col-span-1">
                     <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex justify-between">
                       <span>Group *</span>
                     </label>
                     <select required value={groupId || ''} onChange={e => setGroupId(Number(e.target.value) || null)} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm">
-                      <option value="">Select Group</option>
+                      <option value="">Select</option>
                       {itemGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                     </select>
                   </div>
                   <div className="col-span-1">
                     <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Brand *</label>
                     <select required value={brandId || ''} onChange={e => setBrandId(Number(e.target.value) || null)} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm">
-                      <option value="">Select Brand</option>
+                      <option value="">Select</option>
                       {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
                   </div>
-                  <div className="col-span-2">
+                  <div className="col-span-3">
                     <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Product Name *</label>
                     <input required type="text" value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm" placeholder="e.g. Ventil Air 150MM" />
                   </div>
@@ -664,16 +664,14 @@ export default function Inventory() {
                       setCgstPercentage((parseFloat(val || '0') / 2).toString());
                       setSgstPercentage((parseFloat(val || '0') / 2).toString());
                     }} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm" placeholder="18" />
-                    <div className="flex gap-2 mt-1.5">
-                      <div className="flex-1">
-                        <label className="block text-[10px] font-medium text-muted uppercase mb-1">CGST %</label>
-                        <input required type="number" min="0" max="100" step="0.1" value={cgstPercentage} onChange={e => { const val = e.target.value; setCgstPercentage(val); setGstPercentage((parseFloat(val || "0") + parseFloat(sgstPercentage || "0")).toString()); }} className="w-full px-2 py-1 bg-surface-soft border border-hairline rounded-sm focus:outline-none focus:border-ink text-ink text-xs" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-[10px] font-medium text-muted uppercase mb-1">SGST %</label>
-                        <input required type="number" min="0" max="100" step="0.1" value={sgstPercentage} onChange={e => { const val = e.target.value; setSgstPercentage(val); setGstPercentage((parseFloat(cgstPercentage || "0") + parseFloat(val || "0")).toString()); }} className="w-full px-2 py-1 bg-surface-soft border border-hairline rounded-sm focus:outline-none focus:border-ink text-ink text-xs" />
-                      </div>
-                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">CGST %</label>
+                    <input required type="number" min="0" max="100" step="0.1" value={cgstPercentage} onChange={e => { const val = e.target.value; setCgstPercentage(val); setGstPercentage((parseFloat(val || "0") + parseFloat(sgstPercentage || "0")).toString()); }} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">SGST %</label>
+                    <input required type="number" min="0" max="100" step="0.1" value={sgstPercentage} onChange={e => { const val = e.target.value; setSgstPercentage(val); setGstPercentage((parseFloat(cgstPercentage || "0") + parseFloat(val || "0")).toString()); }} className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink transition-colors text-ink text-sm" />
                   </div>
                 </div>
 
