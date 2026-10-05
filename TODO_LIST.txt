@@ -1,0 +1,32 @@
+INVENTORY MANAGEMENT SOFTWARE - PROJECT TODO LIST
+=================================================
+
+✅ COMPLETED ITEMS (12 / 23)
+-------------------------------------------------
+[x] 1. Barcode auto fetch problem - Resolved automatic barcode scanning fetch.
+[x] 2. Round off - Implemented exact calculation and rounding on POS/Purchases with round-off display.
+[x] 4. GST percentage/amount default change - Ensured GST defaults to percentage format.
+[x] 7. Change grid system to standard layout - Rebuilt POS and Purchases into a professional 3-column layout.
+[x] 8. Cart layout redesign - Replaced +/- buttons with direct numeric typing quantity inputs.
+[x] 14. Settings page wipe data feature - Added a hard wipe capability to completely erase database.
+[x] 15. POS discount default percentage - Changed the discount default from amount (₹) to percentage (%).
+[x] 16. Sales/Purchase locked after creation - Enforced logic that finalized bills cannot be altered.
+[x] 18. Daybook date navigation - Added quick filter buttons (Yesterday, Today, This Week, This Month).
+[x] 20. Purchase quantity min should be one - Enforced min="1" rule on purchase items.
+[x] 21. POS quantity min should be one - Enforced min="1" rule on sale items.
+[x] 3. Billing page "Walk-in party" rename - Changed default customer text from "Walk-in Party" to "Walk-in Customer".
+
+
+⏳ PENDING ITEMS (11 / 23)
+-------------------------------------------------
+[ ] 5. Edit purchase bales - Add capability to modify or edit existing purchase bills.
+[ ] 6. Current date view all - Ensure default Daybook/Reports view instantly shows all current date entries cleanly.
+[ ] 9. Purchase supplier invoice date - Add "Invoice Date" field alongside Invoice Number in Purchases.
+[ ] 10. Sales bill overdue days - Track and display exactly how many days a partial/unpaid sales bill is overdue.
+[ ] 11. Party statement (Ledger) - Build ledger showing Debit, Credit, Outstanding, and Payable for entities.
+[ ] 12. Post-sale customer name/bill no - Display customer name and bill number prominently right after sale completes.
+[ ] 13. Product-wise sales counting - Track and report exact unit counts sold per product over time.
+[ ] 17. Reports full row view - Adjust UI so report tables stretch fully across the screen cleanly.
+[ ] 19. Expenses edit - Add capability to edit existing expense records.
+[ ] 22. Purchase reports search - Add search bar / filters specifically within the Purchase Reports tab.
+[ ] 23. Sales return refund logic - Implement cash/balance financial adjustment logic for returned items.

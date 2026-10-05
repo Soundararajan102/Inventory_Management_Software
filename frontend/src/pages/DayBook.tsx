@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, IndianRupee, Truck, Printer, Receipt as ReceiptIcon } from 'lucide-react';
+import { Calendar, IndianRupee, Truck, Printer, Receipt as ReceiptIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getSalesReport, getPurchaseReport, getSaleDetails, getDayBookProfitAndExpenses, getCustomers } from '../lib/db';
 import type { SalesReportItem, PurchaseReportItem } from '../lib/db';
 import { Receipt } from '../components/Receipt';
@@ -21,6 +21,16 @@ export default function DayBook() {
     const d = new Date();
     d.setDate(d.getDate() - days);
     return d.toISOString().split('T')[0];
+  }
+
+  function adjustDays(days: number) {
+    const s = new Date(startDate);
+    s.setDate(s.getDate() + days);
+    setStartDate(s.toISOString().split('T')[0]);
+    
+    const e = new Date(endDate);
+    e.setDate(e.getDate() + days);
+    setEndDate(e.toISOString().split('T')[0]);
   }
 
   useEffect(() => {
@@ -120,27 +130,54 @@ export default function DayBook() {
     <>
       <Receipt data={printData} />
       <div className="p-8 h-full flex flex-col bg-canvas overflow-y-auto print:hidden">
-      <header className="mb-8 flex justify-between items-end flex-wrap gap-4">
+      <header className="mb-8 flex justify-between items-start gap-4">
         <div>
           <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Day Book</h1>
           <p className="text-base text-body mt-2">View sales and purchases for a specific date range.</p>
         </div>
         
-        <div className="flex items-center gap-3 bg-surface-soft p-2 rounded-lg border border-hairline">
-          <Calendar className="w-5 h-5 text-muted ml-2" />
-          <input 
-            type="date" 
-            value={startDate}
-            onChange={e => setStartDate(e.target.value)}
-            className="px-3 py-2 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink text-sm"
-          />
-          <span className="text-muted text-sm font-medium">to</span>
-          <input 
-            type="date" 
-            value={endDate}
-            onChange={e => setEndDate(e.target.value)}
-            className="px-3 py-2 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink text-sm"
-          />
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2 bg-surface-soft p-1.5 rounded-lg border border-hairline">
+            <button onClick={() => adjustDays(-1)} className="p-1 hover:bg-canvas rounded-md text-muted hover:text-ink transition-colors" title="Previous Day">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <Calendar className="w-4 h-4 text-muted mx-1" />
+            <input 
+              type="date" 
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              className="px-2 py-1 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink text-sm"
+            />
+            <span className="text-muted text-sm font-medium">to</span>
+            <input 
+              type="date" 
+              value={endDate}
+              onChange={e => setEndDate(e.target.value)}
+              className="px-2 py-1 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink text-sm"
+            />
+            <button onClick={() => adjustDays(1)} className="p-1 hover:bg-canvas rounded-md text-muted hover:text-ink transition-colors" title="Next Day">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-1 bg-surface-soft p-1 rounded-lg border border-hairline max-w-full overflow-x-auto">
+            <button onClick={() => { setStartDate(getDaysAgo(1)); setEndDate(getDaysAgo(1)); }} className="px-3 py-1 text-xs font-medium text-muted hover:text-ink hover:bg-canvas rounded-md transition-colors whitespace-nowrap">Yesterday</button>
+            <button onClick={() => { setStartDate(getDaysAgo(0)); setEndDate(getDaysAgo(0)); }} className="px-3 py-1 text-xs font-medium text-muted hover:text-ink hover:bg-canvas rounded-md transition-colors whitespace-nowrap">Today</button>
+            <button onClick={() => { 
+              const d = new Date();
+              const day = d.getDay();
+              const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+              const monday = new Date(d.setDate(diff));
+              setStartDate(monday.toISOString().split('T')[0]);
+              setEndDate(new Date().toISOString().split('T')[0]);
+            }} className="px-3 py-1 text-xs font-medium text-muted hover:text-ink hover:bg-canvas rounded-md transition-colors whitespace-nowrap">This Week</button>
+            <button onClick={() => {
+              const d = new Date();
+              const firstDay = new Date(d.getFullYear(), d.getMonth(), 1);
+              setStartDate(firstDay.toISOString().split('T')[0]);
+              setEndDate(new Date().toISOString().split('T')[0]);
+            }} className="px-3 py-1 text-xs font-medium text-muted hover:text-ink hover:bg-canvas rounded-md transition-colors whitespace-nowrap">This Month</button>
+          </div>
         </div>
       </header>
 
@@ -232,7 +269,7 @@ export default function DayBook() {
                   <tr key={sale.id} className={`hover:bg-surface-soft transition-colors align-top ${sale.status === 'Returned' ? 'bg-red-50/30' : ''}`}>
                     <td className="px-6 py-4 text-muted text-sm font-medium whitespace-nowrap">{sale.date.split(' ')[0]}</td>
                     <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.invoice_number || sale.id}</td>
-                    <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in'}</td>
+                    <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in Customer'}</td>
                     <td className="px-6 py-4 text-sm leading-relaxed">
                       <div className="flex flex-col gap-1">
                         {sale.products_bought ? sale.products_bought.split('\n').map((line, i) => (

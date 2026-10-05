@@ -288,8 +288,6 @@ pub fn run() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE
       );
-      ALTER TABLE products ADD COLUMN group_id INTEGER;
-      ALTER TABLE products ADD COLUMN brand_id INTEGER;
       ",
       kind: MigrationKind::Up,
     }

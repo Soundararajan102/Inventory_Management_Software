@@ -43,7 +43,7 @@ export default function Reports() {
     if (activeTab === 'sales') {
       csv = 'Date,Customer,Products Bought,Total Qty,Amount,Tax,Net Amount\n';
       sales.forEach(s => {
-        csv += `${s.date.split(' ')[0]},"${s.customer_name || 'Walk-in'}","${s.products_bought || ''}",${s.total_quantity || 0},${(s.net_amount - s.tax_amount).toFixed(2)},${s.tax_amount},${s.net_amount}\n`;
+        csv += `${s.date.split(' ')[0]},"${s.customer_name || 'Walk-in Customer'}","${s.products_bought || ''}",${s.total_quantity || 0},${(s.net_amount - s.tax_amount).toFixed(2)},${s.tax_amount},${s.net_amount}\n`;
       });
     } else if (activeTab === 'purchases') {
       csv = 'Date,Supplier,Invoice,Products Bought,Total Qty,Status,Amount,Tax,Net Amount\n';
@@ -196,7 +196,7 @@ export default function Reports() {
                 <tr key={sale.id} className={`hover:bg-surface-soft transition-colors border-b border-hairline last:border-0 align-top ${sale.status === 'Returned' ? 'bg-red-50/30' : ''}`}>
                   <td className="px-6 py-4 text-muted text-sm font-medium whitespace-nowrap">{sale.date.split(' ')[0]}</td>
                   <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.invoice_number || sale.id}</td>
-                  <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in'}</td>
+                  <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in Customer'}</td>
                   <td className="px-6 py-4 text-sm leading-relaxed">
                     <div className="flex flex-col gap-1">
                       {sale.products_bought ? sale.products_bought.split('\n').map((line, i) => (

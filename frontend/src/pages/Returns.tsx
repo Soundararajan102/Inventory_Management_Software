@@ -120,7 +120,7 @@ export default function Returns() {
 
   const getProductName = (id: number) => products.find(p => p.id === id)?.name || `Product #${id}`;
   const getEntityName = (id: number) => {
-    if (!id) return 'Walk-in';
+    if (!id) return 'Walk-in Customer';
     if (activeTab === 'customers') return customers.find(c => c.id === id)?.name || `Entity #${id}`;
     return suppliers.find(s => s.id === id)?.name || `Entity #${id}`;
   };

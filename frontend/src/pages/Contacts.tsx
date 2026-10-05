@@ -99,7 +99,7 @@ export default function Contacts() {
     <div className="p-8 h-full flex flex-col relative bg-canvas overflow-y-auto">
       <header className="mb-12 flex justify-between items-end">
         <div>
-          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Contacts Management</h1>
+          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Parties Management</h1>
           <p className="text-base text-body mt-2">Manage your customers and suppliers in one place.</p>
         </div>
         <button

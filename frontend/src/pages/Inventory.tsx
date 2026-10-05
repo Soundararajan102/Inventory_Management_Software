@@ -63,8 +63,19 @@ export default function Inventory() {
         setAddMasterModal(null);
       }
     };
+    
+    const handleOpenAdd = () => {
+      resetForm();
+      setIsModalOpen(true);
+      setViewMode('items');
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('openAddProduct', handleOpenAdd);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('openAddProduct', handleOpenAdd);
+    };
   }, []);
 
   async function loadProducts() {

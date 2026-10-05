@@ -42,7 +42,7 @@ function Sidebar() {
     { name: 'Returns', path: '/returns', icon: RotateCcw, roles: ['admin', 'billing', 'stock'], shortcut: '7' },
     { name: 'Reports', path: '/reports', icon: FileText, roles: ['admin'], shortcut: '8' },
     { name: 'Inventory', path: '/inventory', icon: Package, roles: ['admin', 'stock'], shortcut: '9' },
-    { name: 'Contacts', path: '/contacts', icon: Users, roles: ['admin', 'billing'], shortcut: '0' },
+    { name: 'Parties', path: '/contacts', icon: Users, roles: ['admin', 'billing'], shortcut: '0' },
     { name: 'Settings', path: '/settings', icon: Settings, roles: ['admin'], shortcut: ',' },
   ];
 
@@ -63,6 +63,17 @@ function Sidebar() {
       if (e.defaultPrevented) return;
 
       if (e.ctrlKey) {
+        if (e.key === '9') {
+          e.preventDefault();
+          if (location.pathname !== '/inventory') {
+            navigate('/inventory');
+            setTimeout(() => window.dispatchEvent(new CustomEvent('openAddProduct')), 150);
+          } else {
+            window.dispatchEvent(new CustomEvent('openAddProduct'));
+          }
+          return;
+        }
+
         const item = visibleMenuItems.find(i => i.shortcut.toLowerCase() === e.key.toLowerCase());
         if (item) {
           e.preventDefault();

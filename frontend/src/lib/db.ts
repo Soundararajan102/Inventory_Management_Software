@@ -1,34 +1,43 @@
 import Database from '@tauri-apps/plugin-sql';
 
 let dbInstance: Database | null = null;
+let dbLoadPromise: Promise<Database> | null = null;
 
 // Always loads the local, offline SQLite file (inventory.db)
 export async function getDb() {
-  if (!dbInstance) {
-    dbInstance = await Database.load('sqlite:inventory.db');
-    
-    // Force create tables if migrations failed
-    try {
-      await dbInstance.execute(`
-        CREATE TABLE IF NOT EXISTS item_groups (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL UNIQUE
-        );
-      `);
-      await dbInstance.execute(`
-        CREATE TABLE IF NOT EXISTS brands (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL UNIQUE
-        );
-      `);
-      // Ignore errors for ADD COLUMN as they might already exist
-      try { await dbInstance.execute('ALTER TABLE products ADD COLUMN group_id INTEGER'); } catch (e) {}
-      try { await dbInstance.execute('ALTER TABLE products ADD COLUMN brand_id INTEGER'); } catch (e) {}
-    } catch (e) {
-      console.error("Error creating tables manually:", e);
-    }
+  if (dbInstance) return dbInstance;
+  if (!dbLoadPromise) {
+    dbLoadPromise = Database.load('sqlite:inventory.db').then(async (db) => {
+      dbInstance = db;
+      
+      // Force create tables if migrations failed
+      try {
+        await db.execute(`
+          CREATE TABLE IF NOT EXISTS item_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+          );
+        `);
+        await db.execute(`
+          CREATE TABLE IF NOT EXISTS brands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+          );
+        `);
+        // Ignore errors for ADD COLUMN as they might already exist
+        try { await db.execute('ALTER TABLE products ADD COLUMN group_id INTEGER'); } catch (e) {}
+        try { await db.execute('ALTER TABLE products ADD COLUMN brand_id INTEGER'); } catch (e) {}
+      } catch (e) {
+        console.error("Error creating tables manually:", e);
+      }
+      
+      return db;
+    }).catch(err => {
+      dbLoadPromise = null;
+      throw err;
+    });
   }
-  return dbInstance;
+  return await dbLoadPromise;
 }
 
 export interface ItemGroup {
@@ -833,13 +842,17 @@ export async function isAppActivated(): Promise<boolean> {
     const result = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
     if (result.length > 0) {
       const expiryDate = new Date(result[0].value);
-      return expiryDate > new Date();
+      const isValid = expiryDate > new Date();
+      if (!isValid) alert("License expired. Expiry: " + result[0].value);
+      return isValid;
     }
     
     // Fallback for previous 'is_activated' key before 1-year expiry feature was added
     const legacyResult = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['is_activated']);
     return legacyResult.length > 0 && legacyResult[0].value === 'true';
-  } catch (e) {
+  } catch (e: any) {
+    alert("isAppActivated error: " + (e.message || e));
+    console.error("isAppActivated error:", e);
     return false;
   }
 }
