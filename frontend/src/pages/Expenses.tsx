@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Plus, X, Receipt, Banknote, Building, Wrench } from 'lucide-react';
-import { getExpenses, recordExpense } from '../lib/db';
+import { Plus, X, Receipt, Banknote, Building, Wrench, Edit, Trash2 } from 'lucide-react';
+import { getExpenses, recordExpense, updateExpense, deleteExpense } from '../lib/db';
 import type { Expense } from '../lib/db';
+import { confirm } from '@tauri-apps/plugin-dialog';
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   // Form State
   const [category, setCategory] = useState('Rent');
@@ -25,24 +27,74 @@ export default function Expenses() {
     }
   }
 
-  async function handleAddExpense(e: React.FormEvent) {
+  async function handleSaveExpense(e: React.FormEvent) {
     e.preventDefault();
     if (amount === '' || amount <= 0) return;
     
     setIsProcessing(true);
     try {
-      await recordExpense(category, Number(amount), description);
+      if (editingExpense) {
+        await updateExpense(editingExpense.id, category, Number(amount), description);
+      } else {
+        await recordExpense(category, Number(amount), description);
+      }
       setIsModalOpen(false);
+      setEditingExpense(null);
       setCategory('Rent');
       setAmount('');
       setDescription('');
       loadExpenses();
     } catch (error) {
       console.error(error);
-      alert(`Error adding expense: ${error}`);
+      alert(`Error saving expense: ${error}`);
     } finally {
       setIsProcessing(false);
     }
+  }
+
+  async function handleDeleteExpense(expense: Expense) {
+    let isConfirmed = false;
+    try {
+      isConfirmed = await confirm(`Are you sure you want to delete this ${expense.category} expense of ₹${expense.amount.toFixed(2)}?`, {
+        title: 'Delete Expense',
+        kind: 'warning'
+      });
+    } catch {
+      isConfirmed = window.confirm(`Are you sure you want to delete this ${expense.category} expense of ₹${expense.amount.toFixed(2)}?`);
+    }
+
+    if (!isConfirmed) return;
+
+    setIsProcessing(true);
+    try {
+      await deleteExpense(expense.id);
+      if (isModalOpen && editingExpense?.id === expense.id) {
+        setIsModalOpen(false);
+        setEditingExpense(null);
+      }
+      await loadExpenses();
+    } catch (error) {
+      console.error(error);
+      alert(`Error deleting expense: ${error}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  function openNewExpenseModal() {
+    setEditingExpense(null);
+    setCategory('Rent');
+    setAmount('');
+    setDescription('');
+    setIsModalOpen(true);
+  }
+
+  function openEditExpenseModal(expense: Expense) {
+    setEditingExpense(expense);
+    setCategory(expense.category);
+    setAmount(expense.amount);
+    setDescription(expense.description || '');
+    setIsModalOpen(true);
   }
 
   const getCategoryIcon = (cat: string) => {
@@ -64,7 +116,7 @@ export default function Expenses() {
           <p className="text-slate-500 mt-1">Track business overheads and day-to-day spending</p>
         </div>
         <button 
-          onClick={() => setIsModalOpen(true)}
+          onClick={openNewExpenseModal}
           className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold shadow-sm hover:shadow flex items-center transition-all"
         >
           <Plus className="w-5 h-5 mr-2" />
@@ -82,6 +134,7 @@ export default function Expenses() {
                 <th className="px-6 py-4">Description</th>
                 <th className="px-6 py-4">Date</th>
                 <th className="px-6 py-4 text-right">Amount (₹)</th>
+                <th className="px-6 py-4 w-24 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -104,11 +157,29 @@ export default function Expenses() {
                   <td className="px-6 py-4 text-right">
                     <span className="font-bold text-slate-800">₹{expense.amount.toFixed(2)}</span>
                   </td>
+                  <td className="px-6 py-4 text-center">
+                    <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => openEditExpenseModal(expense)}
+                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                        title="Edit Expense"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteExpense(expense)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                        title="Delete Expense"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
               {expenses.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-16 text-center text-slate-500">
+                  <td colSpan={5} className="p-16 text-center text-slate-500">
                     <div className="flex flex-col items-center justify-center">
                       <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                         <Banknote className="w-8 h-8 text-slate-300" />
@@ -123,18 +194,18 @@ export default function Expenses() {
         </div>
       </div>
 
-      {/* Add Expense Modal */}
+      {/* Add / Edit Expense Modal */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200">
             <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-blue-50">
-              <h2 className="text-lg font-bold text-slate-800">Record Expense</h2>
+              <h2 className="text-lg font-bold text-slate-800">{editingExpense ? 'Edit Expense' : 'Record Expense'}</h2>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors bg-white rounded-full p-1 shadow-sm">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
-            <form onSubmit={handleAddExpense} className="p-6 flex flex-col gap-4">
+            <form onSubmit={handleSaveExpense} className="p-6 flex flex-col gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Category *</label>
                 <select 
@@ -176,16 +247,28 @@ export default function Expenses() {
                 />
               </div>
               
-              <div className="mt-2 pt-4 border-t border-slate-100">
+              <div className="mt-2 pt-4 border-t border-slate-100 flex gap-2">
+                {editingExpense && (
+                  <button 
+                    type="button"
+                    onClick={() => handleDeleteExpense(editingExpense)}
+                    disabled={isProcessing}
+                    className="px-4 py-3 rounded-xl font-bold text-sm text-red-600 hover:bg-red-50 border border-red-200 transition-colors flex items-center justify-center gap-1.5 shrink-0"
+                    title="Delete Expense"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete</span>
+                  </button>
+                )}
                 <button 
                   type="submit" 
                   disabled={isProcessing || amount === '' || amount <= 0}
-                  className={`w-full py-3 rounded-xl font-bold text-lg flex items-center justify-center transition-all shadow-md
+                  className={`flex-1 py-3 rounded-xl font-bold text-lg flex items-center justify-center transition-all shadow-md
                     ${isProcessing || amount === '' || amount <= 0 
                       ? 'bg-slate-200 text-slate-400 shadow-none cursor-not-allowed' 
                       : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20'}`}
                 >
-                  {isProcessing ? 'Saving...' : 'Save Expense'}
+                  {isProcessing ? 'Saving...' : (editingExpense ? 'Update Expense' : 'Save Expense')}
                 </button>
               </div>
             </form>

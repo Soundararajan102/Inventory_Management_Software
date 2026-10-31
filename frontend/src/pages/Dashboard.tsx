@@ -1,4 +1,4 @@
-import { IndianRupee, TrendingUp, AlertCircle, ShoppingBag, Package, Receipt, Truck, LineChart, Users, FileText, RotateCcw, Settings, X } from 'lucide-react';
+import { IndianRupee, TrendingUp, AlertCircle, ShoppingBag, Package, Receipt, Truck, LineChart, Users, FileText, RotateCcw, Settings, X, ArrowUpRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { getDashboardStats } from '../lib/db';
@@ -28,6 +28,12 @@ export default function Dashboard() {
     } else {
       setSelectedActions(['pos', 'purchases', 'expenses']);
     }
+
+    const handlePrefChange = () => {
+      loadStats();
+    };
+    window.addEventListener('preferencesUpdated', handlePrefChange);
+    return () => window.removeEventListener('preferencesUpdated', handlePrefChange);
   }, []);
 
   async function loadStats() {
@@ -48,51 +54,63 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
         <StatCard 
           title="Net Profit" 
-          value={stats ? `₹${stats.netProfit.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          value={stats ? `₹${stats.netProfit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '...'} 
           icon={LineChart} 
           color={stats && stats.netProfit >= 0 ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"} 
+          to="/reports"
         />
         <StatCard 
           title="Total Sales" 
-          value={stats ? `₹${stats.totalSales.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          value={stats ? `₹${stats.totalSales.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '...'} 
           icon={IndianRupee} 
           color="bg-blue-100 text-blue-600" 
+          to="/daybook"
+          state={{ activeTab: 'sales' }}
         />
         <StatCard 
           title="Inventory Value" 
-          value={stats ? `₹${stats.totalInventoryValue.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          value={stats ? `₹${stats.totalInventoryValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '...'} 
           icon={Package} 
           color="bg-blue-100 text-blue-600" 
+          to="/inventory"
         />
         <StatCard 
           title="Total Receivables" 
-          value={stats ? `₹${stats.totalReceivables.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          value={stats ? `₹${stats.totalReceivables.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '...'} 
           icon={TrendingUp} 
           color="bg-emerald-100 text-emerald-600" 
+          to="/contacts"
+          state={{ activeTab: 'customers', filterWithBalance: true }}
         />
         <StatCard 
           title="Total Payables" 
-          value={stats ? `₹${stats.totalPayables.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          value={stats ? `₹${stats.totalPayables.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '...'} 
           icon={Truck} 
           color="bg-orange-100 text-orange-600" 
+          to="/contacts"
+          state={{ activeTab: 'suppliers', filterWithBalance: true }}
         />
         <StatCard 
           title="Total Expenses" 
-          value={stats ? `₹${stats.totalExpenses.toLocaleString(undefined, {minimumFractionDigits: 2})}` : '...'} 
+          value={stats ? `₹${stats.totalExpenses.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '...'} 
           icon={Receipt} 
           color="bg-red-100 text-red-600" 
+          to="/expenses"
         />
         <StatCard 
           title="Total Products" 
           value={stats ? stats.totalProducts.toString() : '...'} 
           icon={ShoppingBag} 
           color="bg-purple-100 text-purple-600" 
+          to="/inventory"
         />
         <StatCard 
           title="Low Stock Items" 
           value={stats ? stats.lowStockItems.toString() : '...'} 
           icon={AlertCircle} 
           color={stats && stats.lowStockItems > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"} 
+          to="/inventory"
+          state={{ filterLowStock: true }}
         />
       </div>
 
@@ -188,16 +206,47 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ title, value, icon: Icon, color }: { title: string, value: string, icon: any, color: string }) {
-  return (
-    <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 flex items-center">
-      <div className={`p-4 rounded-full mr-4 ${color}`}>
-        <Icon className="w-6 h-6" />
+function StatCard({ 
+  title, 
+  value, 
+  icon: Icon, 
+  color,
+  to,
+  state
+}: { 
+  title: string; 
+  value: string; 
+  icon: any; 
+  color: string;
+  to?: string;
+  state?: any;
+}) {
+  const content = (
+    <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 flex items-center justify-between group hover:border-primary/50 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 relative overflow-hidden h-full">
+      <div className="flex items-center">
+        <div className={`p-4 rounded-full mr-4 ${color} transition-transform group-hover:scale-105 shrink-0`}>
+          <Icon className="w-6 h-6" />
+        </div>
+        <div>
+          <p className="text-sm text-muted font-medium">{title}</p>
+          <p className="text-2xl font-bold text-ink mt-0.5">{value}</p>
+        </div>
       </div>
-      <div>
-        <p className="text-sm text-muted font-medium">{title}</p>
-        <p className="text-2xl font-bold text-ink">{value}</p>
-      </div>
+      {to && (
+        <div className="p-1 rounded-md text-muted/30 group-hover:text-primary transition-colors shrink-0 self-start" title={`Open ${title}`}>
+          <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+        </div>
+      )}
     </div>
   );
+
+  if (to) {
+    return (
+      <Link to={to} state={state} className="block h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 rounded-xl">
+        {content}
+      </Link>
+    );
+  }
+
+  return content;
 }

@@ -290,6 +290,49 @@ pub fn run() {
       );
       ",
       kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 20,
+      description: "add_supplier_invoice_date",
+      sql: "
+      ALTER TABLE purchases ADD COLUMN supplier_invoice_date TEXT;
+      ",
+      kind: MigrationKind::Up,
+    },
+    Migration {
+      version: 21,
+      description: "add_warehouse_system",
+      sql: "
+      CREATE TABLE IF NOT EXISTS warehouses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        location TEXT,
+        phone TEXT,
+        notes TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS warehouse_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        warehouse_id INTEGER NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(warehouse_id, product_id)
+      );
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        from_location_type TEXT NOT NULL,
+        from_location_id INTEGER DEFAULT 0,
+        from_location_name TEXT NOT NULL,
+        to_location_type TEXT NOT NULL,
+        to_location_id INTEGER DEFAULT 0,
+        to_location_name TEXT NOT NULL,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL,
+        notes TEXT
+      );
+      ",
+      kind: MigrationKind::Up,
     }
   ];
 

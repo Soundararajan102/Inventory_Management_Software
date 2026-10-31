@@ -20,6 +20,7 @@ export default function Returns() {
   // Return quantities: product_id -> qty
   const [returnQtys, setReturnQtys] = useState<Record<number, number>>({});
   const [reason, setReason] = useState('');
+  const [refundMethod, setRefundMethod] = useState<'credit' | 'cash'>('credit');
 
   useEffect(() => {
     loadReturns();
@@ -55,9 +56,22 @@ export default function Returns() {
     }
   }
 
+  function getEffectivePrice(item: TransactionDetail['items'][0], tx: TransactionDetail | null): number {
+    if (!tx || !tx.discount || tx.discount <= 0) return item.unit_price;
+    const totalGross = tx.items.reduce((s, it) => s + (it.unit_price * it.quantity), 0);
+    if (totalGross <= 0) return item.unit_price;
+    const discountRatio = tx.discount / totalGross;
+    return Number((item.unit_price * (1 - discountRatio)).toFixed(2));
+  }
+
   function handleSelectTx(tx: TransactionDetail) {
     setSelectedTx(tx);
     setReturnQtys({});
+    if (!tx.entity_id || tx.entity_id <= 0) {
+      setRefundMethod('cash');
+    } else {
+      setRefundMethod('credit');
+    }
   }
 
   function handleQtyChange(productId: number, qty: number, maxQty: number) {
@@ -83,18 +97,20 @@ export default function Returns() {
     try {
       const entityType = activeTab === 'customers' ? 'customer' : 'supplier';
       
-      // We loop over each item and record it in the DB
+      // Loop over each item and record it in the DB (recordReturn handles stock, balance/cash refund, and status)
       for (const item of itemsToReturn) {
         const qty = returnQtys[item.product_id];
-        const amount = qty * item.unit_price;
+        const effPrice = getEffectivePrice(item, selectedTx);
+        const amount = Number((qty * effPrice).toFixed(2));
         await recordReturn(
           entityType,
-          selectedTx.entity_id || 0, // Walk-in customers might have entity_id = 0/null in DB conceptually, handled in DB layer
-          selectedTx.id, // transactionId
+          selectedTx.entity_id || 0,
+          selectedTx.id,
           item.product_id,
           qty,
           amount,
-          reason
+          reason,
+          refundMethod
         );
       }
       
@@ -115,7 +131,8 @@ export default function Returns() {
   }
 
   const totalRefundAmount = selectedTx ? selectedTx.items.reduce((sum, item) => {
-    return sum + ((returnQtys[item.product_id] || 0) * item.unit_price);
+    const effPrice = getEffectivePrice(item, selectedTx);
+    return sum + ((returnQtys[item.product_id] || 0) * effPrice);
   }, 0) : 0;
 
   const getProductName = (id: number) => products.find(p => p.id === id)?.name || `Product #${id}`;
@@ -293,7 +310,9 @@ export default function Returns() {
                     </div>
                     <div>
                       <p className="text-xs text-slate-500 font-medium mb-1">DATE</p>
-                      <p className="font-semibold text-slate-800 text-lg">{selectedTx.date.split(' ')[0]}</p>
+                      <p className="font-semibold text-slate-800 text-lg">
+                        {new Date(selectedTx.date.split(' ')[0]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </p>
                     </div>
                   </div>
 
@@ -310,28 +329,47 @@ export default function Returns() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {selectedTx.items.map(item => {
+                          const returnedQty = item.returned_quantity || 0;
+                          const maxReturnable = Math.max(0, item.quantity - returnedQty);
                           const returnQty = returnQtys[item.product_id] || 0;
+                          const effPrice = getEffectivePrice(item, selectedTx);
+                          const hasDiscount = (selectedTx.discount || 0) > 0 && effPrice < item.unit_price;
                           return (
                             <tr key={item.product_id} className={returnQty > 0 ? "bg-blue-50/50" : ""}>
                               <td className="px-4 py-4">
                                 <p className="font-medium text-slate-800">{item.name}</p>
                                 {item.model && <p className="text-xs text-slate-500">{item.model}</p>}
                               </td>
-                              <td className="px-4 py-4 text-right text-slate-600 font-medium">₹{item.unit_price.toFixed(2)}</td>
-                              <td className="px-4 py-4 text-right text-slate-600">{item.quantity} {item.unit}</td>
+                              <td className="px-4 py-4 text-right text-slate-600 font-medium">
+                                ₹{item.unit_price.toFixed(2)}
+                                {hasDiscount && (
+                                  <span className="block text-[10px] text-emerald-600 font-normal">
+                                    Eff: ₹{effPrice.toFixed(2)}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-4 text-right text-slate-600">
+                                <div>{item.quantity} {item.unit}</div>
+                                {returnedQty > 0 && (
+                                  <div className="text-[11px] text-amber-600 font-medium">
+                                    {returnedQty} returned
+                                  </div>
+                                )}
+                              </td>
                               <td className="px-4 py-4 flex justify-end">
                                 <input 
                                   type="number" 
                                   min="0" 
-                                  max={item.quantity} 
+                                  max={maxReturnable} 
+                                  disabled={maxReturnable <= 0}
                                   value={returnQty || ''} 
-                                  onChange={(e) => handleQtyChange(item.product_id, parseInt(e.target.value) || 0, item.quantity)}
-                                  className="w-24 px-3 py-2 text-right font-semibold border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all"
-                                  placeholder="0"
+                                  onChange={(e) => handleQtyChange(item.product_id, parseInt(e.target.value) || 0, maxReturnable)}
+                                  className="w-24 px-3 py-2 text-right font-semibold border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all disabled:bg-slate-100 disabled:text-slate-400"
+                                  placeholder={maxReturnable <= 0 ? "Done" : "0"}
                                 />
                               </td>
                               <td className="px-4 py-4 text-right font-bold text-slate-800">
-                                ₹{(returnQty * item.unit_price).toFixed(2)}
+                                ₹{(returnQty * effPrice).toFixed(2)}
                               </td>
                             </tr>
                           );
@@ -340,18 +378,54 @@ export default function Returns() {
                     </table>
                   </div>
 
-                  <div className="flex gap-6 items-start">
-                    <div className="flex-1">
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Reason for Return (Optional)</label>
-                      <input 
-                        type="text" 
-                        value={reason} 
-                        onChange={e => setReason(e.target.value)} 
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800" 
-                        placeholder="e.g. Damaged, Wrong Item" 
-                      />
+                  <div className="flex flex-col md:flex-row gap-6 items-stretch">
+                    <div className="flex-1 flex flex-col gap-5">
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">Reason for Return (Optional)</label>
+                        <input 
+                          type="text" 
+                          value={reason} 
+                          onChange={e => setReason(e.target.value)} 
+                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 shadow-sm" 
+                          placeholder="e.g. Damaged, Wrong Item" 
+                        />
+                      </div>
+                      
+                      {selectedTx.entity_id > 0 ? (
+                        <div>
+                          <label className="block text-sm font-semibold text-slate-700 mb-2">Refund Method</label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <label className={`flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-all ${refundMethod === 'credit' ? 'border-blue-500 bg-blue-50/50' : 'border-slate-200 hover:border-slate-300 bg-white shadow-sm'}`}>
+                              <input 
+                                type="radio" 
+                                name="refundMethod" 
+                                value="credit" 
+                                checked={refundMethod === 'credit'} 
+                                onChange={() => setRefundMethod('credit')}
+                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="text-slate-700 font-medium text-sm">Credit to Account</span>
+                            </label>
+                            <label className={`flex items-center gap-3 p-3 border rounded-xl cursor-pointer transition-all ${refundMethod === 'cash' ? 'border-blue-500 bg-blue-50/50' : 'border-slate-200 hover:border-slate-300 bg-white shadow-sm'}`}>
+                              <input 
+                                type="radio" 
+                                name="refundMethod" 
+                                value="cash" 
+                                checked={refundMethod === 'cash'} 
+                                onChange={() => setRefundMethod('cash')}
+                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="text-slate-700 font-medium text-sm">Immediate Cash/UPI</span>
+                            </label>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-800 text-xs font-medium">
+                          Refund Method: <strong>Immediate Cash / UPI</strong> (Walk-in Customer has no account ledger)
+                        </div>
+                      )}
                     </div>
-                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-5 rounded-xl border border-blue-100 min-w-[200px] shadow-inner text-right">
+                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-6 rounded-xl border border-blue-100 shadow-inner flex flex-col justify-center items-center min-w-[220px]">
                       <p className="text-sm text-blue-800 font-medium mb-1">Total Refund</p>
                       <p className="text-4xl font-bold text-blue-900">₹{totalRefundAmount.toFixed(2)}</p>
                     </div>

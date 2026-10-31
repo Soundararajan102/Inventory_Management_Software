@@ -65,7 +65,8 @@ body {
     background: white;
   }
   
-  #printable-receipt {
+  #printable-receipt,
+  #printable-report {
     display: block !important;
     width: 100%;
   }

@@ -21,11 +21,12 @@ export default function Settings() {
   const [shopName, setShopName] = useState(() => localStorage.getItem('shopName') || 'Electro Hub');
   const [shopAddress, setShopAddress] = useState(() => localStorage.getItem('shopAddress') || '123 Market Street, City');
   const [shopPhone, setShopPhone] = useState(() => localStorage.getItem('shopPhone') || '+91 9876543210');
-  const [shopGSTIN, setShopGSTIN] = useState(() => localStorage.getItem('shopGSTIN') || '27XXXXX1234X1X1');
+  const [shopGSTIN, setShopGSTIN] = useState(() => (localStorage.getItem('shopGSTIN') || '27XXXXX1234X1X1').toUpperCase());
 
   const updateShopDetail = (key: string, value: string, setter: React.Dispatch<React.SetStateAction<string>>) => {
-    setter(value);
-    localStorage.setItem(key, value);
+    const finalVal = key === 'shopGSTIN' ? value.toUpperCase() : value;
+    setter(finalVal);
+    localStorage.setItem(key, finalVal);
     window.dispatchEvent(new Event('preferencesUpdated'));
   };
 
@@ -52,6 +53,10 @@ export default function Settings() {
     const val = localStorage.getItem('purchaseTaxMethod') as 'exclusive' | 'inclusive';
     if (val) return val;
     return (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive'; // fallback to legacy
+  });
+
+  const [profitTaxMode, setProfitTaxMode] = useState<'with_gst' | 'without_gst'>(() => {
+    return (localStorage.getItem('profitTaxMode') as 'with_gst' | 'without_gst') || 'with_gst';
   });
   
   const [lowStockThreshold, setLowStockThreshold] = useState(() => {
@@ -141,6 +146,12 @@ export default function Settings() {
     const newMethod = purchaseTaxMethod === 'exclusive' ? 'inclusive' : 'exclusive';
     setPurchaseTaxMethod(newMethod);
     localStorage.setItem('purchaseTaxMethod', newMethod);
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const toggleProfitTaxMode = (mode: 'with_gst' | 'without_gst') => {
+    setProfitTaxMode(mode);
+    localStorage.setItem('profitTaxMode', mode);
     window.dispatchEvent(new Event('preferencesUpdated'));
   };
 
@@ -359,7 +370,7 @@ export default function Settings() {
                     <input 
                       type="text" 
                       value={shopGSTIN} 
-                      onChange={e => updateShopDetail('shopGSTIN', e.target.value, setShopGSTIN)}
+                      onChange={e => updateShopDetail('shopGSTIN', e.target.value.toUpperCase(), setShopGSTIN)}
                       className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-ink transition-colors text-ink font-medium uppercase"
                       placeholder="27XXXXX1234X1X1"
                     />
@@ -465,6 +476,41 @@ export default function Settings() {
                       </button>
                     </div>
                   )}
+                </div>
+              </div>
+            </section>
+
+            {/* Profit Calculation Mode */}
+            <section>
+              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">Profit Calculation</h3>
+              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
+                <div className="p-6 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <p className="font-bold text-ink">Net Profit Calculation Mode</p>
+                      <p className="text-sm text-muted">
+                        {profitTaxMode === 'with_gst' 
+                          ? 'With GST: Full customer bill amount minus purchase cost' 
+                          : 'Without GST: Base selling price minus purchase cost, excluding GST'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 p-1 bg-surface-soft border border-hairline rounded-lg shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleProfitTaxMode('with_gst')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${profitTaxMode === 'with_gst' ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-ink'}`}
+                      >
+                        With GST
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleProfitTaxMode('without_gst')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${profitTaxMode === 'without_gst' ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-ink'}`}
+                      >
+                        Without GST
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>

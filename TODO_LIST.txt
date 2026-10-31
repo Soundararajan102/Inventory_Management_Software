@@ -15,18 +15,17 @@ INVENTORY MANAGEMENT SOFTWARE - PROJECT TODO LIST
 [x] 20. Purchase quantity min should be one - Enforced min="1" rule on purchase items.
 [x] 21. POS quantity min should be one - Enforced min="1" rule on sale items.
 [x] 3. Billing page "Walk-in party" rename - Changed default customer text from "Walk-in Party" to "Walk-in Customer".
+[x] 6. Current date view all - Ensure default Daybook/Reports view instantly shows all current date entries cleanly.
+[x] 9. Purchase supplier invoice date - Add "Invoice Date" field alongside Invoice Number in Purchases.
+[x] 11. Party statement (Ledger) - Build ledger showing Debit, Credit, Outstanding, and Payable for entities.
+[x] 13. Product-wise sales counting - Track and report exact unit counts sold per product over time.
+[x] 23. Sales return refund logic - Implement cash/balance financial adjustment logic for returned items.
 
-
-⏳ PENDING ITEMS (11 / 23)
+⏳ PENDING ITEMS (4 / 23)
 -------------------------------------------------
-[ ] 5. Edit purchase bales - Add capability to modify or edit existing purchase bills.
-[ ] 6. Current date view all - Ensure default Daybook/Reports view instantly shows all current date entries cleanly.
-[ ] 9. Purchase supplier invoice date - Add "Invoice Date" field alongside Invoice Number in Purchases.
+[x] 5. Edit purchase bales - Add capability to modify or edit existing purchase bills.
 [ ] 10. Sales bill overdue days - Track and display exactly how many days a partial/unpaid sales bill is overdue.
-[ ] 11. Party statement (Ledger) - Build ledger showing Debit, Credit, Outstanding, and Payable for entities.
 [ ] 12. Post-sale customer name/bill no - Display customer name and bill number prominently right after sale completes.
-[ ] 13. Product-wise sales counting - Track and report exact unit counts sold per product over time.
 [ ] 17. Reports full row view - Adjust UI so report tables stretch fully across the screen cleanly.
-[ ] 19. Expenses edit - Add capability to edit existing expense records.
+[x] 19. Expenses edit - Add capability to edit existing expense records.
 [ ] 22. Purchase reports search - Add search bar / filters specifically within the Purchase Reports tab.
-[ ] 23. Sales return refund logic - Implement cash/balance financial adjustment logic for returned items.

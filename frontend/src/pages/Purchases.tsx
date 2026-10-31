@@ -1,16 +1,33 @@
-import { useState, useEffect } from 'react';
-import { Search, X, Truck, FileText, IndianRupee } from 'lucide-react';
-import { getSellableProducts, getSuppliers, recordPurchase } from '../lib/db';
-import type { Product, Supplier, PurchaseItem } from '../lib/db';
+import { useState, useEffect, useRef } from 'react';
+import { Search, X, Truck, FileText, IndianRupee, Store, Building2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { getSellableProducts, getSuppliers, recordPurchase, getPurchaseById, updatePurchaseBill, getWarehouses } from '../lib/db';
+import type { Product, Supplier, PurchaseItem, Warehouse } from '../lib/db';
 
 export default function Purchases() {
   const [search, setSearch] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [destinationType, setDestinationType] = useState<'shop' | 'warehouse'>('shop');
+  const [destinationWarehouseId, setDestinationWarehouseId] = useState<number | ''>('');
+
+  const location = useLocation();
+  const navigate = useNavigate();
+  const searchParams = new URLSearchParams(location.search);
+  const editPurchaseIdParam = searchParams.get('editId');
+  const editPurchaseId = editPurchaseIdParam ? Number(editPurchaseIdParam) : undefined;
 
   const [cart, setCart] = useState<PurchaseItem[]>([]);
+  const getLocalDate = () => {
+    const d = new Date();
+    const offset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offset).toISOString().split('T')[0];
+  };
+
   const [supplierId, setSupplierId] = useState<number | ''>('');
   const [invoiceNo, setInvoiceNo] = useState('');
+  const [supplierInvoiceDate, setSupplierInvoiceDate] = useState(getLocalDate());
 
   const [supplierSearch, setSupplierSearch] = useState('');
   const [isSupplierDropdownOpen, setIsSupplierDropdownOpen] = useState(false);
@@ -60,12 +77,54 @@ export default function Purchases() {
 
   useEffect(() => {
     loadData();
-  }, []);
+    if (editPurchaseId) {
+      loadEditData(editPurchaseId);
+    }
+  }, [editPurchaseId]);
+
+  async function loadEditData(id: number) {
+    try {
+      const p = await getPurchaseById(id);
+      if (p) {
+        setSupplierId(p.entity_id);
+        setInvoiceNo(p.invoice_number || '');
+        if (p.date) setSupplierInvoiceDate(p.date.split(' ')[0]);
+        if (p.destination_type) {
+          setDestinationType(p.destination_type as 'shop' | 'warehouse');
+        }
+        if (p.destination_warehouse_id) {
+          setDestinationWarehouseId(p.destination_warehouse_id);
+        }
+        setCart(p.items.map(i => ({
+          id: i.product_id,
+          name: i.name,
+          model: i.model,
+          purchase_price: i.unit_price,
+          purchase_qty: i.quantity,
+          unit: i.unit,
+          hsn_code: i.hsn_code,
+          cgst_percentage: i.cgst_percentage,
+          sgst_percentage: i.sgst_percentage,
+          gst_percentage: i.gst_percentage
+        } as PurchaseItem)));
+        setDiscountType('amount');
+        setDiscount(p.discount || 0);
+        setPaidAmount(p.paid_amount || 0);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   async function loadData() {
     try {
       setProducts(await getSellableProducts());
       setSuppliers(await getSuppliers());
+      const whList = await getWarehouses();
+      setWarehouses(whList);
+      if (whList.length > 0 && destinationWarehouseId === '') {
+        setDestinationWarehouseId(whList[0].id);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -196,34 +255,101 @@ export default function Purchases() {
     setPaidAmount(Number(grandTotal.toFixed(2)));
   }
 
+  // Global Ctrl + S shortcut handler
+  const handleRecordActionRef = useRef<(() => void) | undefined>(undefined);
+  handleRecordActionRef.current = () => {
+    if (isProcessing) return;
+    handleRecord();
+  };
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleRecordActionRef.current?.();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
   async function handleRecord() {
-    if (cart.length === 0 || supplierId === '' || invoiceNo.trim() === '') {
-      alert("Please select a supplier, enter an invoice number, and add items.");
+    if (cart.length === 0) {
+      alert("Purchase bill is empty! Please add products before saving.");
+      return;
+    }
+    const invalidItem = cart.find(i => i.purchase_qty <= 0);
+    if (invalidItem) {
+      alert(`Item "${invalidItem.name}" has an invalid quantity. Quantity must be at least 1.`);
+      return;
+    }
+    if (supplierId === '') {
+      alert("Please select a supplier for this purchase.");
+      return;
+    }
+    if (invoiceNo.trim() === '') {
+      alert("Please enter a supplier invoice number.");
+      return;
+    }
+
+    if (destinationType === 'warehouse' && (destinationWarehouseId === '' || warehouses.length === 0)) {
+      alert('Please select a warehouse destination or create a warehouse first in Inventory.');
       return;
     }
 
     setIsProcessing(true);
     try {
-      await recordPurchase(
-        Number(supplierId),
-        invoiceNo,
-        cart,
-        subtotal,
-        tax,
-        discountAmount,
-        grandTotal,
-        paidAmount
-      );
-
-      alert('Purchase recorded successfully! Stock and Supplier Balance updated.');
+      if (editPurchaseId) {
+        await updatePurchaseBill(
+          editPurchaseId,
+          Number(supplierId),
+          invoiceNo,
+          supplierInvoiceDate,
+          cart,
+          subtotal,
+          tax,
+          discountAmount,
+          grandTotal,
+          paidAmount,
+          destinationType,
+          destinationType === 'warehouse' ? Number(destinationWarehouseId) : null
+        );
+        alert('Purchase bill updated successfully!');
+        navigate('/daybook', { 
+          state: { 
+            activeTab: 'purchases',
+            startDate: (location.state as any)?.startDate,
+            endDate: (location.state as any)?.endDate
+          } 
+        });
+      } else {
+        await recordPurchase(
+          Number(supplierId),
+          invoiceNo,
+          supplierInvoiceDate,
+          cart,
+          subtotal,
+          tax,
+          discountAmount,
+          grandTotal,
+          paidAmount,
+          destinationType,
+          destinationType === 'warehouse' ? Number(destinationWarehouseId) : null
+        );
+        alert('Purchase recorded successfully! Stock and Supplier Balance updated.');
+      }
 
       // Reset Form
       setCart([]);
       setSupplierId('');
       setInvoiceNo('');
+      setSupplierInvoiceDate(getLocalDate());
       setDiscount(0);
       setDiscountType('percentage');
       setPaidAmount(0);
+      setDestinationType('shop');
+      if (warehouses.length > 0) setDestinationWarehouseId(warehouses[0].id);
       loadData();
     } catch (error) {
       console.error(error);
@@ -296,15 +422,106 @@ export default function Purchases() {
             )}
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex items-center"><FileText className="w-3.5 h-3.5 mr-1" /> Invoice No *</label>
-            <input
-              type="text"
-              value={invoiceNo}
-              onChange={e => setInvoiceNo(e.target.value)}
-              placeholder="e.g. INV-1001"
-              className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink uppercase text-sm placeholder-muted"
-            />
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex items-center"><FileText className="w-3.5 h-3.5 mr-1" /> Invoice No *</label>
+              <input
+                type="text"
+                value={invoiceNo}
+                onChange={e => setInvoiceNo(e.target.value)}
+                placeholder="e.g. INV-1001"
+                className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink uppercase text-sm placeholder-muted"
+              />
+            </div>
+            <div className="w-1/3">
+              <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex items-center">Invoice Date</label>
+              <input
+                type="date"
+                value={supplierInvoiceDate}
+                onChange={e => setSupplierInvoiceDate(e.target.value)}
+                className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Stock Destination Selector */}
+          <div className="pt-3 border-t border-hairline">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-muted uppercase tracking-wider flex items-center gap-1.5">
+                <Store className="w-3.5 h-3.5 text-primary" /> Stock Inward Destination *
+              </label>
+              <span className="text-[11px] font-normal text-muted">
+                {destinationType === 'shop' ? 'Direct to Main Store' : 'Direct to Godown'}
+              </span>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setDestinationType('shop')}
+                className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm border transition-all ${
+                  destinationType === 'shop'
+                    ? 'bg-ink text-canvas border-ink shadow-sm'
+                    : 'bg-canvas text-muted hover:text-ink border-hairline hover:border-ink/40'
+                }`}
+              >
+                <Store className="w-3.5 h-3.5" />
+                <span>Main Shop</span>
+                <span className={`text-[10px] px-1 py-0.2 rounded font-normal ${destinationType === 'shop' ? 'bg-canvas/20 text-canvas' : 'bg-surface-soft text-muted'}`}>Default</span>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setDestinationType('warehouse')}
+                className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm border transition-all ${
+                  destinationType === 'warehouse'
+                    ? 'bg-ink text-canvas border-ink shadow-sm'
+                    : 'bg-canvas text-muted hover:text-ink border-hairline hover:border-ink/40'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Warehouse / Godown</span>
+                {warehouses.length > 0 && (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-normal ${destinationType === 'warehouse' ? 'bg-canvas/20 text-canvas' : 'bg-surface-soft text-muted'}`}>
+                    {warehouses.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {destinationType === 'warehouse' && (
+              <div className="mt-2.5 bg-surface-soft border border-hairline p-2.5 rounded-sm animate-fade-in-up">
+                {warehouses.length > 0 ? (
+                  <div>
+                    <label className="block text-[11px] font-medium text-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <Building2 className="w-3 h-3 text-muted" /> Select Target Godown
+                    </label>
+                    <select
+                      value={destinationWarehouseId}
+                      onChange={(e) => setDestinationWarehouseId(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink text-xs cursor-pointer shadow-sm"
+                    >
+                      {warehouses.map((wh) => (
+                        <option key={wh.id} value={wh.id}>
+                          🏢 {wh.name} {wh.location ? `(${wh.location})` : ''} — {wh.total_quantity || 0} units stored
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded border border-amber-200 flex items-center justify-between">
+                    <span>No warehouses created yet.</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/inventory')}
+                      className="underline font-semibold hover:text-amber-900 ml-2"
+                    >
+                      Add in Warehouses tab
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
         </div>
@@ -435,27 +652,34 @@ export default function Purchases() {
               <span className="text-2xl font-display text-ink tracking-tight leading-none">₹{grandTotal.toFixed(2)}</span>
             </div>
 
-            <div className="flex justify-between items-center text-sm text-body pt-4 pb-2 border-t border-hairline mt-4">
-              <span className="font-medium text-ink">Amount Paid</span>
-              <div className="flex items-center gap-2">
-                <button onClick={payInFull} className="text-xs text-primary font-medium hover:underline">Pay Full</button>
-                <div className="flex items-center border-b border-hairline bg-transparent focus-within:border-ink transition-colors">
-                  <span className="text-muted font-medium mr-1">₹</span>
-                  <input
-                    type="number" min="0" max={grandTotal}
-                    value={paidAmount === 0 ? '' : paidAmount}
-                    onChange={(e) => setPaidAmount(Number(e.target.value) || 0)}
-                    placeholder="0"
-                    className="w-20 text-right bg-transparent focus:outline-none font-medium text-ink py-0.5"
-                  />
+            {/* Amount Paid */}
+            <>
+                <div className="flex justify-between items-center text-sm text-body pt-4 pb-2 border-t border-hairline mt-4">
+                  <span className="font-medium text-ink">Amount Paid</span>
+                  <div className="flex items-center gap-2">
+                    <button onClick={payInFull} className="text-xs text-primary font-medium hover:underline">Pay Full</button>
+                    <div className="flex items-center border-b border-hairline bg-transparent focus-within:border-ink transition-colors">
+                      <span className="text-muted font-medium mr-1">₹</span>
+                      <input
+                        type="number" min="0" max={grandTotal}
+                        value={paidAmount === 0 ? '' : paidAmount}
+                        onChange={(e) => {
+                          let val = Number(e.target.value) || 0;
+                          if (val > grandTotal) val = Number(grandTotal.toFixed(2));
+                          setPaidAmount(val);
+                        }}
+                        placeholder="0"
+                        className="w-20 text-right bg-transparent focus:outline-none font-medium text-ink py-0.5"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            {paidAmount < grandTotal && grandTotal > 0 && (
-              <div className="text-right text-xs text-signature-coral font-medium mt-1">
-                Balance ₹{(grandTotal - paidAmount).toFixed(2)} added to Supplier
-              </div>
-            )}
+                {paidAmount < grandTotal && grandTotal > 0 && (
+                  <div className="text-right text-xs text-signature-coral font-medium mt-1">
+                    Balance ₹{(grandTotal - paidAmount).toFixed(2)} added to Supplier
+                  </div>
+                )}
+              </>
           </div>
         </div>
         
@@ -464,9 +688,10 @@ export default function Purchases() {
           <button
             onClick={handleRecord}
             disabled={cart.length === 0 || supplierId === '' || invoiceNo.trim() === '' || isProcessing}
+            title="Save / Record Purchase (Ctrl+S)"
             className={`w-full font-medium py-3 rounded-lg flex justify-center items-center text-base transition-colors ${cart.length === 0 || supplierId === '' || invoiceNo.trim() === '' || isProcessing ? 'bg-surface-strong text-muted cursor-not-allowed' : 'bg-primary hover:bg-primary-active text-on-primary'}`}
           >
-            <IndianRupee className="w-4 h-4 mr-2" /> {isProcessing ? 'Processing...' : 'Record Purchase'}
+            <IndianRupee className="w-4 h-4 mr-2" /> {isProcessing ? 'Processing...' : (editPurchaseId ? 'Update Purchase Bill (Ctrl+S)' : 'Record Purchase (Ctrl+S)')}
           </button>
           <button 
             onClick={() => {

@@ -1,28 +1,97 @@
 import { useState, useEffect } from 'react';
-import { FileText, Download, Calendar } from 'lucide-react';
-import { getSalesReport, getPurchaseReport, getExpenseReport } from '../lib/db';
-import type { SalesReportItem, PurchaseReportItem, Expense } from '../lib/db';
+import { 
+  Download, Calendar, Printer, Package, 
+  IndianRupee, ShoppingCart, Users, Truck, ArrowUpDown 
+} from 'lucide-react';
+import { 
+  getSalesReport, getPurchaseReport, getExpenseReport, getProductWiseSalesReport,
+  getInventoryValuationReport, getPartyDetailedLedger, getCustomers, getSuppliers
+} from '../lib/db';
+import type { 
+  SalesReportItem, PurchaseReportItem, Expense, ProductWiseSale, 
+  InventoryValuationItem, Customer, Supplier, DetailedLedgerResult 
+} from '../lib/db';
+import { PrintableReport } from '../components/PrintableReport';
+import type { PrintableReportData } from '../components/PrintableReport';
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState<'sales' | 'purchases' | 'expenses'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'purchases' | 'inventory' | 'expenses' | 'ledger' | 'products'>('sales');
   
   // Date filters
   const [startDate, setStartDate] = useState(getDaysAgo(30));
   const [endDate, setEndDate] = useState(getDaysAgo(0));
 
+  // Report Data States
   const [sales, setSales] = useState<SalesReportItem[]>([]);
   const [purchases, setPurchases] = useState<PurchaseReportItem[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [productSales, setProductSales] = useState<ProductWiseSale[]>([]);
+  const [inventory, setInventory] = useState<InventoryValuationItem[]>([]);
+
+  // Party Ledger Filter States
+  const [partyType, setPartyType] = useState<'customer' | 'supplier'>('customer');
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [selectedPartyId, setSelectedPartyId] = useState<number | ''>('');
+  const [partyLedgerResult, setPartyLedgerResult] = useState<DetailedLedgerResult | null>(null);
+
+  // Print Data State
+  const [printReportData, setPrintReportData] = useState<PrintableReportData | null>(null);
 
   function getDaysAgo(days: number) {
     const d = new Date();
     d.setDate(d.getDate() - days);
-    return d.toISOString().split('T')[0];
+    const offset = d.getTimezoneOffset() * 60000;
+    const localDate = new Date(d.getTime() - offset);
+    return localDate.toISOString().split('T')[0];
+  }
+
+  // Quick Preset Handlers
+  function applyPreset(preset: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all') {
+    const today = getDaysAgo(0);
+    if (preset === 'today') {
+      setStartDate(today);
+      setEndDate(today);
+    } else if (preset === 'yesterday') {
+      const y = getDaysAgo(1);
+      setStartDate(y);
+      setEndDate(y);
+    } else if (preset === 'week') {
+      setStartDate(getDaysAgo(7));
+      setEndDate(today);
+    } else if (preset === 'month') {
+      setStartDate(getDaysAgo(30));
+      setEndDate(today);
+    } else if (preset === 'year') {
+      setStartDate(getDaysAgo(365));
+      setEndDate(today);
+    } else if (preset === 'all') {
+      setStartDate('2020-01-01');
+      setEndDate(today);
+    }
+  }
+
+  useEffect(() => {
+    loadPartyOptions();
+  }, []);
+
+  async function loadPartyOptions() {
+    try {
+      const c = await getCustomers();
+      setCustomers(c);
+      const s = await getSuppliers();
+      setSuppliers(s);
+      if (c.length > 0 && selectedPartyId === '') {
+        setSelectedPartyId(c[0].id);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   useEffect(() => {
     loadReports();
-  }, [activeTab, startDate, endDate]);
+  }, [activeTab, startDate, endDate, partyType, selectedPartyId]);
 
   async function loadReports() {
     try {
@@ -30,31 +99,288 @@ export default function Reports() {
         setSales(await getSalesReport(startDate, endDate));
       } else if (activeTab === 'purchases') {
         setPurchases(await getPurchaseReport(startDate, endDate));
-      } else {
+      } else if (activeTab === 'inventory') {
+        setInventory(await getInventoryValuationReport());
+      } else if (activeTab === 'products') {
+        setProductSales(await getProductWiseSalesReport(startDate, endDate));
+      } else if (activeTab === 'expenses') {
         setExpenses(await getExpenseReport(startDate, endDate));
+      } else if (activeTab === 'ledger') {
+        if (selectedPartyId !== '') {
+          const res = await getPartyDetailedLedger(partyType, Number(selectedPartyId), startDate, endDate);
+          setPartyLedgerResult(res);
+        } else {
+          setPartyLedgerResult(null);
+        }
       }
     } catch (e) {
       console.error(e);
     }
   }
 
+  // Totals Calculations
+  const totalSalesAmount = sales.reduce((sum, s) => sum + s.net_amount, 0);
+  const totalSalesTax = sales.reduce((sum, s) => sum + (s.tax_amount || 0), 0);
+  const totalSalesQty = sales.reduce((sum, s) => sum + (s.total_quantity || 0), 0);
+
+  const totalPurchasesAmount = purchases.reduce((sum, p) => sum + p.net_amount, 0);
+  const totalPurchasesTax = purchases.reduce((sum, p) => sum + (p.tax_amount || 0), 0);
+  const totalPurchasesQty = purchases.reduce((sum, p) => sum + (p.total_quantity || 0), 0);
+
+  const totalExpensesAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalProductSalesAmount = productSales.reduce((sum, ps) => sum + ps.total_revenue, 0);
+
+  const totalStockValuation = inventory.reduce((sum, i) => sum + (i.stock_valuation || 0), 0);
+  const totalRetailValuation = inventory.reduce((sum, i) => sum + (i.retail_valuation || 0), 0);
+  const totalStockUnits = inventory.reduce((sum, i) => sum + (i.stock_quantity || 0), 0);
+
+  // Trigger PDF Report Generation & Print Dialog
+  const handleExportPDF = () => {
+    let reportData: PrintableReportData | null = null;
+    const formattedRange = `${startDate} to ${endDate}`;
+
+    if (activeTab === 'sales') {
+      reportData = {
+        reportTitle: 'SALES TRANSACTION REPORT',
+        dateRange: formattedRange,
+        summaryCards: [
+          { label: 'Total Sales Revenue', value: `₹${totalSalesAmount.toFixed(2)}`, highlight: true },
+          { label: 'Total GST Tax Collected', value: `₹${totalSalesTax.toFixed(2)}` },
+          { label: 'Total Invoices', value: sales.length },
+          { label: 'Total Units Sold', value: totalSalesQty }
+        ],
+        columns: [
+          { header: 'Date', accessor: 'formattedDate' },
+          { header: 'Invoice #', accessor: 'invoice_number' },
+          { header: 'Customer', accessor: 'customer_name' },
+          { header: 'Items / Qty', accessor: 'products_bought' },
+          { header: 'Total Qty', accessor: 'total_quantity', align: 'center' },
+          { header: 'Tax (₹)', accessor: 'formattedTax', align: 'right' },
+          { header: 'Net Amount (₹)', accessor: 'formattedNet', align: 'right' }
+        ],
+        rows: sales.map(s => ({
+          ...s,
+          formattedDate: s.date.split(' ')[0],
+          invoice_number: s.invoice_number || `INV-${s.id}`,
+          customer_name: s.customer_name || 'Walk-in Customer',
+          formattedTax: (s.tax_amount || 0).toFixed(2),
+          formattedNet: `₹${s.net_amount.toFixed(2)}`
+        })),
+        totalRow: {
+          formattedDate: '',
+          invoice_number: '',
+          customer_name: '',
+          products_bought: `${sales.length} Bills`,
+          total_quantity: totalSalesQty,
+          formattedTax: `₹${totalSalesTax.toFixed(2)}`,
+          formattedNet: `₹${totalSalesAmount.toFixed(2)}`
+        }
+      };
+    } else if (activeTab === 'purchases') {
+      reportData = {
+        reportTitle: 'PURCHASE TRANSACTION REPORT',
+        dateRange: formattedRange,
+        summaryCards: [
+          { label: 'Total Purchases Value', value: `₹${totalPurchasesAmount.toFixed(2)}`, highlight: true },
+          { label: 'Total GST Paid', value: `₹${totalPurchasesTax.toFixed(2)}` },
+          { label: 'Total Invoices', value: purchases.length },
+          { label: 'Total Units Purchased', value: totalPurchasesQty }
+        ],
+        columns: [
+          { header: 'Date', accessor: 'formattedDate' },
+          { header: 'Supplier', accessor: 'supplier_name' },
+          { header: 'Supplier Inv #', accessor: 'invoice_number' },
+          { header: 'Items / Details', accessor: 'products_bought' },
+          { header: 'Total Qty', accessor: 'total_quantity', align: 'center' },
+          { header: 'Status', accessor: 'status', align: 'center' },
+          { header: 'Tax (₹)', accessor: 'formattedTax', align: 'right' },
+          { header: 'Net Amount (₹)', accessor: 'formattedNet', align: 'right' }
+        ],
+        rows: purchases.map(p => ({
+          ...p,
+          formattedDate: p.date.split(' ')[0],
+          formattedTax: (p.tax_amount || 0).toFixed(2),
+          formattedNet: `₹${p.net_amount.toFixed(2)}`
+        })),
+        totalRow: {
+          formattedDate: '',
+          supplier_name: '',
+          invoice_number: '',
+          products_bought: `${purchases.length} Purchases`,
+          total_quantity: totalPurchasesQty,
+          status: '',
+          formattedTax: `₹${totalPurchasesTax.toFixed(2)}`,
+          formattedNet: `₹${totalPurchasesAmount.toFixed(2)}`
+        }
+      };
+    } else if (activeTab === 'inventory') {
+      reportData = {
+        reportTitle: 'INVENTORY STOCK VALUATION REPORT',
+        subTitle: `As of ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`,
+        summaryCards: [
+          { label: 'Total Inventory Valuation (Cost)', value: `₹${totalStockValuation.toFixed(2)}`, highlight: true },
+          { label: 'Potential Retail Value', value: `₹${totalRetailValuation.toFixed(2)}` },
+          { label: 'Total Product Items (SKUs)', value: inventory.length },
+          { label: 'Total Stock Units', value: totalStockUnits }
+        ],
+        columns: [
+          { header: 'Item Name', accessor: 'name' },
+          { header: 'Model / Spec', accessor: 'model' },
+          { header: 'Category', accessor: 'group_name' },
+          { header: 'Stock Qty', accessor: 'stock_display', align: 'center' },
+          { header: 'Cost Price (₹)', accessor: 'formattedPurchase', align: 'right' },
+          { header: 'Selling Price (₹)', accessor: 'formattedSelling', align: 'right' },
+          { header: 'Stock Value (₹)', accessor: 'formattedValuation', align: 'right' }
+        ],
+        rows: inventory.map(item => ({
+          ...item,
+          model: item.model || '-',
+          stock_display: `${item.stock_quantity} ${item.unit}`,
+          formattedPurchase: `₹${item.purchase_price.toFixed(2)}`,
+          formattedSelling: `₹${item.selling_price.toFixed(2)}`,
+          formattedValuation: `₹${item.stock_valuation.toFixed(2)}`
+        })),
+        totalRow: {
+          name: '',
+          model: '',
+          group_name: `${inventory.length} Items`,
+          stock_display: `${totalStockUnits} Units`,
+          formattedPurchase: '',
+          formattedSelling: `₹${totalRetailValuation.toFixed(2)}`,
+          formattedValuation: `₹${totalStockValuation.toFixed(2)}`
+        }
+      };
+    } else if (activeTab === 'expenses') {
+      reportData = {
+        reportTitle: 'EXPENSES SUMMARY REPORT',
+        dateRange: formattedRange,
+        summaryCards: [
+          { label: 'Total Expenses Incurred', value: `₹${totalExpensesAmount.toFixed(2)}`, highlight: true },
+          { label: 'Total Expense Entries', value: expenses.length }
+        ],
+        columns: [
+          { header: 'Date', accessor: 'formattedDate' },
+          { header: 'Category', accessor: 'category' },
+          { header: 'Description / Particulars', accessor: 'description' },
+          { header: 'Amount (₹)', accessor: 'formattedAmount', align: 'right' }
+        ],
+        rows: expenses.map(e => ({
+          ...e,
+          formattedDate: e.date.split(' ')[0],
+          description: e.description || '-',
+          formattedAmount: `₹${e.amount.toFixed(2)}`
+        })),
+        totalRow: {
+          formattedDate: '',
+          category: '',
+          description: `${expenses.length} Records`,
+          formattedAmount: `₹${totalExpensesAmount.toFixed(2)}`
+        }
+      };
+    } else if (activeTab === 'ledger') {
+      const activeParty = (partyType === 'customer' ? customers : suppliers).find(p => p.id === Number(selectedPartyId));
+      if (!activeParty || !partyLedgerResult) {
+        alert('Please select a party to generate the ledger statement.');
+        return;
+      }
+
+      reportData = {
+        reportTitle: `${partyType === 'customer' ? 'CUSTOMER' : 'SUPPLIER'} LEDGER STATEMENT`,
+        dateRange: formattedRange,
+        partyDetails: {
+          name: activeParty.name,
+          phone: activeParty.phone || undefined,
+          address: activeParty.address || undefined,
+          gstin: activeParty.gstin ? activeParty.gstin.toUpperCase() : undefined,
+          type: partyType === 'customer' ? 'Customer' : 'Supplier',
+          openingBalance: partyLedgerResult.openingBalance,
+          closingBalance: partyLedgerResult.closingBalance
+        },
+        summaryCards: [
+          { 
+            label: 'Opening Balance', 
+            value: `₹${Math.abs(partyLedgerResult.openingBalance).toFixed(2)} ${partyLedgerResult.openingBalance >= 0 ? '(Dr)' : '(Cr)'}` 
+          },
+          { label: 'Total Debited (+)', value: `₹${partyLedgerResult.totalDebit.toFixed(2)}` },
+          { label: 'Total Credited (-)', value: `₹${partyLedgerResult.totalCredit.toFixed(2)}` },
+          { 
+            label: 'Closing Balance', 
+            value: `₹${Math.abs(partyLedgerResult.closingBalance).toFixed(2)} ${partyLedgerResult.closingBalance >= 0 ? '(Dr)' : '(Cr)'}`, 
+            highlight: true 
+          }
+        ],
+        columns: [
+          { header: 'Date', accessor: 'formattedDate' },
+          { header: 'Voucher Type', accessor: 'type' },
+          { header: 'Particulars / Reference', accessor: 'description' },
+          { header: 'Debit (₹)', accessor: 'formattedDebit', align: 'right' },
+          { header: 'Credit (₹)', accessor: 'formattedCredit', align: 'right' },
+          { header: 'Balance (₹)', accessor: 'formattedBalance', align: 'right' }
+        ],
+        rows: partyLedgerResult.entries.map(e => ({
+          ...e,
+          formattedDate: e.date.split(' ')[0],
+          formattedDebit: e.debit > 0 ? `₹${e.debit.toFixed(2)}` : '-',
+          formattedCredit: e.credit > 0 ? `₹${e.credit.toFixed(2)}` : '-',
+          formattedBalance: `₹${Math.abs(e.balance).toFixed(2)} ${e.balance >= 0 ? '(Dr)' : '(Cr)'}`
+        })),
+        totalRow: {
+          formattedDate: '',
+          type: '',
+          description: 'Total Transactions',
+          formattedDebit: `₹${partyLedgerResult.totalDebit.toFixed(2)}`,
+          formattedCredit: `₹${partyLedgerResult.totalCredit.toFixed(2)}`,
+          formattedBalance: `₹${Math.abs(partyLedgerResult.closingBalance).toFixed(2)} ${partyLedgerResult.closingBalance >= 0 ? '(Dr)' : '(Cr)'}`
+        }
+      };
+    }
+
+    if (!reportData) return;
+
+    setPrintReportData(reportData);
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  };
+
+  // Export CSV Handler
   const exportCSV = async () => {
     let csv = '';
     if (activeTab === 'sales') {
-      csv = 'Date,Customer,Products Bought,Total Qty,Amount,Tax,Net Amount\n';
+      csv = 'Date,Bill No,Customer,Products Bought,Total Qty,Amount,Tax,Net Amount\n';
       sales.forEach(s => {
-        csv += `${s.date.split(' ')[0]},"${s.customer_name || 'Walk-in Customer'}","${s.products_bought || ''}",${s.total_quantity || 0},${(s.net_amount - s.tax_amount).toFixed(2)},${s.tax_amount},${s.net_amount}\n`;
+        csv += `${s.date.split(' ')[0]},"${s.invoice_number || s.id}","${s.customer_name || 'Walk-in Customer'}","${(s.products_bought || '').replace(/"/g, '""')}",${s.total_quantity || 0},${(s.net_amount - s.tax_amount).toFixed(2)},${s.tax_amount},${s.net_amount}\n`;
       });
     } else if (activeTab === 'purchases') {
-      csv = 'Date,Supplier,Invoice,Products Bought,Total Qty,Status,Amount,Tax,Net Amount\n';
+      csv = 'Date,Supplier,Supplier Invoice No,Invoice Date,Products Bought,Total Qty,Status,Amount,Tax,Net Amount\n';
       purchases.forEach(p => {
-        csv += `${p.date.split(' ')[0]},"${p.supplier_name}",${p.invoice_number},"${p.products_bought || ''}",${p.total_quantity || 0},${p.status},${(p.net_amount - p.tax_amount).toFixed(2)},${p.tax_amount},${p.net_amount}\n`;
+        csv += `${p.date.split(' ')[0]},"${p.supplier_name}","${p.invoice_number}","${p.supplier_invoice_date || ''}","${(p.products_bought || '').replace(/"/g, '""')}",${p.total_quantity || 0},${p.status},${(p.net_amount - p.tax_amount).toFixed(2)},${p.tax_amount},${p.net_amount}\n`;
       });
-    } else {
+    } else if (activeTab === 'inventory') {
+      csv = 'Product ID,Item Name,Model,Category,Brand,Stock Quantity,Unit,Cost Price,Selling Price,Stock Valuation,Retail Valuation\n';
+      inventory.forEach(i => {
+        csv += `${i.id},"${i.name}","${i.model || ''}","${i.group_name || ''}","${i.brand_name || ''}",${i.stock_quantity},"${i.unit}",${i.purchase_price},${i.selling_price},${i.stock_valuation},${i.retail_valuation}\n`;
+      });
+    } else if (activeTab === 'products') {
+      csv = 'Product ID,Product Name,Model,Units Sold,Net Revenue\n';
+      productSales.forEach(ps => {
+        csv += `${ps.product_id},"${ps.product_name}","${ps.model || ''}",${ps.total_quantity},${ps.total_revenue.toFixed(2)}\n`;
+      });
+    } else if (activeTab === 'expenses') {
       csv = 'Date,Category,Amount,Description\n';
       expenses.forEach(e => {
-        csv += `${e.date.split(' ')[0]},"${e.category}",${e.amount},"${e.description || ''}"\n`;
+        csv += `${e.date.split(' ')[0]},"${e.category}",${e.amount},"${(e.description || '').replace(/"/g, '""')}"\n`;
       });
+    } else if (activeTab === 'ledger') {
+      const activeParty = (partyType === 'customer' ? customers : suppliers).find(p => p.id === Number(selectedPartyId));
+      csv = `Ledger Statement for: ${activeParty ? activeParty.name : ''} (${partyType})\n`;
+      csv += `Period: ${startDate} to ${endDate}\n`;
+      csv += `Opening Balance: ${partyLedgerResult?.openingBalance || 0}\n\n`;
+      csv += 'Date,Type,Description,Debit,Credit,Running Balance\n';
+      partyLedgerResult?.entries.forEach(e => {
+        csv += `${e.date.split(' ')[0]},"${e.type}","${(e.description || '').replace(/"/g, '""')}",${e.debit},${e.credit},${e.balance}\n`;
+      });
+      csv += `\nClosing Balance: ${partyLedgerResult?.closingBalance || 0}\n`;
     }
     
     try {
@@ -71,209 +397,480 @@ export default function Reports() {
 
       if (savePath) {
         await writeTextFile(savePath, '\ufeff' + csv);
-        alert('Report exported successfully!');
+        alert('Report exported successfully to CSV!');
       }
     } catch (e: any) {
       console.error(e);
-      alert('Failed to export report: ' + e.message);
+      alert('Failed to export CSV: ' + e.message);
     }
   };
 
-  const totalSalesAmount = sales.reduce((sum, s) => sum + s.net_amount, 0);
-  const totalPurchasesAmount = purchases.reduce((sum, p) => sum + p.net_amount, 0);
-  const totalExpensesAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
-
   return (
-    <div className="p-8 h-full flex flex-col relative bg-canvas overflow-y-auto">
-      <header className="mb-12 flex justify-between items-end">
-        <div>
-          <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Business Reports</h1>
-          <p className="text-base text-body mt-2">Generate and export detailed transaction reports.</p>
-        </div>
-        <button 
-          onClick={exportCSV}
-          className="bg-primary hover:bg-primary-active text-on-primary px-6 py-3 rounded-lg font-medium shadow-md hover:shadow-lg flex items-center transition-all"
-        >
-          <Download className="w-5 h-5 mr-2" />
-          Export to CSV
-        </button>
-      </header>
+    <>
+      {/* 1. Invisible PDF/Print Document Portal */}
+      <PrintableReport data={printReportData} />
 
-      <div className="bg-canvas rounded-xl shadow-sm border border-hairline flex-1 flex flex-col overflow-hidden">
-        {/* Toolbar */}
-        <div className="p-4 border-b border-hairline flex justify-between items-center bg-canvas flex-wrap gap-4">
-          <div className="flex gap-2">
-            <button 
-              onClick={() => setActiveTab('sales')}
-              className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'sales' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
-            >
-              <FileText className="w-4 h-4 mr-2" />
-              Sales Report
-            </button>
-            <button 
-              onClick={() => setActiveTab('purchases')}
-              className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'purchases' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
-            >
-              <FileText className="w-4 h-4 mr-2" />
-              Purchases Report
-            </button>
-            <button 
-              onClick={() => setActiveTab('expenses')}
-              className={`px-4 py-2 rounded-md font-medium text-sm flex items-center transition-colors ${activeTab === 'expenses' ? 'bg-surface-soft text-ink border border-hairline' : 'text-muted hover:text-ink hover:bg-surface-soft border border-transparent'}`}
-            >
-              <FileText className="w-4 h-4 mr-2" />
-              Expenses Report
-            </button>
+      {/* 2. Main On-Screen Reports Interface */}
+      <div className="p-8 h-full flex flex-col relative bg-canvas overflow-y-auto print:hidden">
+        
+        {/* Top Header */}
+        <header className="mb-8 flex justify-between items-start gap-4 flex-wrap">
+          <div>
+            <h1 className="text-3xl font-display font-medium text-ink tracking-tight">Business Reports & Statements</h1>
+            <p className="text-sm text-body mt-1">Export professional PDF reports and financial ledger statements.</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Calendar className="w-5 h-5 text-muted" />
-            <input 
-              type="date" 
-              value={startDate}
-              onChange={e => setStartDate(e.target.value)}
-              className="px-3 py-2 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink text-sm"
-            />
-            <span className="text-muted text-sm font-medium">to</span>
-            <input 
-              type="date" 
-              value={endDate}
-              onChange={e => setEndDate(e.target.value)}
-              className="px-3 py-2 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors text-ink text-sm"
-            />
+          <div className="flex items-center gap-2.5">
+            <button 
+              onClick={exportCSV}
+              className="bg-canvas hover:bg-surface-soft text-ink border border-hairline px-4 py-2.5 rounded-lg font-medium text-sm flex items-center transition-colors shadow-2xs"
+              title="Download Excel / CSV spreadsheet"
+            >
+              <Download className="w-4 h-4 mr-2 text-muted" />
+              Export CSV
+            </button>
+
+            <button 
+              onClick={handleExportPDF}
+              className="bg-primary hover:bg-primary-active text-on-primary px-5 py-2.5 rounded-lg font-medium text-sm flex items-center transition-colors shadow-sm"
+              title="Print or Save as PDF"
+            >
+              <Printer className="w-4 h-4 mr-2" />
+              Export PDF / Print
+            </button>
           </div>
-        </div>
+        </header>
 
-        {/* Totals Banner */}
-        <div className="p-4 border-b border-hairline bg-surface-soft flex justify-end">
-           <div className="text-right">
-             <div className="text-xs font-medium text-muted uppercase tracking-wider mb-1">
-               Total {activeTab === 'sales' ? 'Sales' : activeTab === 'purchases' ? 'Purchases' : 'Expenses'} (Selected Period)
-             </div>
-             <div className="text-2xl font-bold text-ink">
-               ₹{(activeTab === 'sales' ? totalSalesAmount : activeTab === 'purchases' ? totalPurchasesAmount : totalExpensesAmount).toFixed(2)}
-             </div>
-           </div>
-        </div>
+        {/* Main Card */}
+        <div className="bg-canvas rounded-xl shadow-xs border border-hairline flex-1 flex flex-col overflow-hidden">
+          
+          {/* Tabs & Filters Toolbar */}
+          <div className="p-4 border-b border-hairline flex justify-between items-center bg-canvas flex-wrap gap-4">
+            
+            {/* Tabs */}
+            <div className="flex gap-1.5 overflow-x-auto pb-1 md:pb-0">
+              <button 
+                onClick={() => setActiveTab('sales')}
+                className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'sales' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
+              >
+                <ShoppingCart className="w-3.5 h-3.5 mr-1.5" />
+                Sales Report
+              </button>
 
-        {/* Table */}
-        <div className="overflow-x-auto flex-1 bg-canvas">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-surface-soft border-b border-hairline text-muted text-xs font-medium uppercase tracking-wider sticky top-0 z-10">
-                <th className="px-6 py-4 whitespace-nowrap">Date</th>
-                {activeTab === 'sales' ? (
-                  <>
-                    <th className="px-6 py-4 whitespace-nowrap">Bill No</th>
-                    <th className="px-6 py-4 whitespace-nowrap">Customer</th>
-                    <th className="px-6 py-4 min-w-[300px]">Products Bought</th>
-                    <th className="px-6 py-4 text-center whitespace-nowrap">Total Qty</th>
-                    <th className="px-6 py-4 whitespace-nowrap">Status</th>
-                    <th className="px-6 py-4 text-right whitespace-nowrap">Amount (₹)</th>
-                    <th className="px-6 py-4 text-right whitespace-nowrap">Tax (₹)</th>
-                  </>
-                ) : activeTab === 'purchases' ? (
-                  <>
-                    <th className="px-6 py-4 whitespace-nowrap">Supplier</th>
-                    <th className="px-6 py-4 whitespace-nowrap">Invoice #</th>
-                    <th className="px-6 py-4 min-w-[300px]">Products Bought</th>
-                    <th className="px-6 py-4 text-center whitespace-nowrap">Total Qty</th>
-                    <th className="px-6 py-4 whitespace-nowrap">Status</th>
-                    <th className="px-6 py-4 text-right whitespace-nowrap">Amount (₹)</th>
-                    <th className="px-6 py-4 text-right whitespace-nowrap">Tax (₹)</th>
-                  </>
-                ) : (
-                  <>
-                    <th className="px-6 py-4 whitespace-nowrap">Category</th>
-                    <th className="px-6 py-4">Description</th>
-                  </>
+              <button 
+                onClick={() => setActiveTab('purchases')}
+                className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'purchases' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
+              >
+                <Truck className="w-3.5 h-3.5 mr-1.5" />
+                Purchases Report
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('inventory')}
+                className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'inventory' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
+              >
+                <Package className="w-3.5 h-3.5 mr-1.5" />
+                Stock Valuation
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('expenses')}
+                className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'expenses' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
+              >
+                <IndianRupee className="w-3.5 h-3.5 mr-1.5" />
+                Expenses Report
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('ledger')}
+                className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'ledger' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
+              >
+                <Users className="w-3.5 h-3.5 mr-1.5" />
+                Party Ledger Statement
+              </button>
+
+              <button 
+                onClick={() => setActiveTab('products')}
+                className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'products' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 mr-1.5" />
+                Product Sales
+              </button>
+            </div>
+
+            {/* Date Range Pickers (Except for Inventory which is as-of-now) */}
+            {activeTab !== 'inventory' && (
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {/* Date Presets */}
+                <div className="flex items-center bg-surface-soft p-1 rounded-md border border-hairline gap-1">
+                  <button onClick={() => applyPreset('today')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">Today</button>
+                  <button onClick={() => applyPreset('yesterday')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">Yesterday</button>
+                  <button onClick={() => applyPreset('week')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">7 Days</button>
+                  <button onClick={() => applyPreset('month')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">30 Days</button>
+                  <button onClick={() => applyPreset('all')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">All</button>
+                </div>
+
+                <div className="flex items-center gap-1.5 bg-canvas px-2.5 py-1.5 border border-hairline rounded-md">
+                  <Calendar className="w-3.5 h-3.5 text-muted" />
+                  <input 
+                    type="date" 
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    className="bg-transparent text-ink text-xs focus:outline-none"
+                  />
+                  <span className="text-muted">to</span>
+                  <input 
+                    type="date" 
+                    value={endDate}
+                    onChange={e => setEndDate(e.target.value)}
+                    className="bg-transparent text-ink text-xs focus:outline-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sub-bar for Party Ledger Selection */}
+          {activeTab === 'ledger' && (
+            <div className="px-4 py-3 bg-surface-soft/60 border-b border-hairline flex items-center gap-4 flex-wrap text-xs">
+              <div className="flex items-center gap-1 bg-canvas p-1 rounded-md border border-hairline">
+                <button
+                  onClick={() => {
+                    setPartyType('customer');
+                    if (customers.length > 0) setSelectedPartyId(customers[0].id);
+                  }}
+                  className={`px-3 py-1 rounded font-medium ${partyType === 'customer' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink'}`}
+                >
+                  Customer Ledger
+                </button>
+                <button
+                  onClick={() => {
+                    setPartyType('supplier');
+                    if (suppliers.length > 0) setSelectedPartyId(suppliers[0].id);
+                  }}
+                  className={`px-3 py-1 rounded font-medium ${partyType === 'supplier' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink'}`}
+                >
+                  Supplier Ledger
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 flex-1 max-w-sm">
+                <span className="font-semibold text-muted uppercase tracking-wider text-[11px]">Select Party:</span>
+                <select
+                  value={selectedPartyId}
+                  onChange={e => setSelectedPartyId(Number(e.target.value) || '')}
+                  className="flex-1 px-3 py-1.5 bg-canvas border border-hairline rounded-md text-xs font-semibold text-ink focus:outline-none focus:border-primary"
+                >
+                  {(partyType === 'customer' ? customers : suppliers).map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.phone ? `(${p.phone})` : ''} - Bal: ₹{p.balance.toFixed(2)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* KPI Summary Banner */}
+          <div className="p-4 border-b border-hairline bg-surface-soft/60 grid grid-cols-2 md:grid-cols-4 gap-4">
+            {activeTab === 'sales' ? (
+              <>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Sales</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalSalesAmount.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total GST Collected</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalSalesTax.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Bills</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{sales.length}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Units Sold</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{totalSalesQty}</span>
+                </div>
+              </>
+            ) : activeTab === 'purchases' ? (
+              <>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Purchases</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalPurchasesAmount.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total GST Paid</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalPurchasesTax.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Purchase Invoices</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{purchases.length}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Units Purchased</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{totalPurchasesQty}</span>
+                </div>
+              </>
+            ) : activeTab === 'inventory' ? (
+              <>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Stock Valuation (Cost)</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalStockValuation.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Retail Value (MRP/Sale)</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalRetailValuation.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Product Count (SKUs)</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{inventory.length}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Stock Units</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{totalStockUnits}</span>
+                </div>
+              </>
+            ) : activeTab === 'expenses' ? (
+              <>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline col-span-2">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Expenses</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalExpensesAmount.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline col-span-2">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Expense Entries</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{expenses.length}</span>
+                </div>
+              </>
+            ) : activeTab === 'ledger' && partyLedgerResult ? (
+              <>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Opening Balance</span>
+                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">
+                    ₹{Math.abs(partyLedgerResult.openingBalance).toFixed(2)} {partyLedgerResult.openingBalance >= 0 ? '(Dr)' : '(Cr)'}
+                  </span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Debited (+)</span>
+                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">₹{partyLedgerResult.totalDebit.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Credited (-)</span>
+                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">₹{partyLedgerResult.totalCredit.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Closing Balance</span>
+                  <span className="text-base font-bold text-primary tabular-nums mt-0.5 block">
+                    ₹{Math.abs(partyLedgerResult.closingBalance).toFixed(2)} {partyLedgerResult.closingBalance >= 0 ? '(Dr)' : '(Cr)'}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="p-3 bg-canvas rounded-lg border border-hairline col-span-4">
+                <span className="text-[11px] font-semibold uppercase text-muted block">Product Net Revenue</span>
+                <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalProductSalesAmount.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* On-Screen Table */}
+          <div className="overflow-x-auto flex-1 bg-canvas">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-surface-soft border-b border-hairline text-muted text-[11px] font-semibold uppercase tracking-wider sticky top-0 z-10">
+                  <th className="px-4 py-3 whitespace-nowrap">#</th>
+                  {activeTab !== 'inventory' && activeTab !== 'products' && (
+                    <th className="px-4 py-3 whitespace-nowrap">Date</th>
+                  )}
+
+                  {activeTab === 'sales' && (
+                    <>
+                      <th className="px-4 py-3 whitespace-nowrap">Bill No</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Customer</th>
+                      <th className="px-4 py-3 min-w-64">Items / Products</th>
+                      <th className="px-4 py-3 text-center whitespace-nowrap">Total Qty</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Tax (₹)</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Net Amount (₹)</th>
+                    </>
+                  )}
+
+                  {activeTab === 'purchases' && (
+                    <>
+                      <th className="px-4 py-3 whitespace-nowrap">Supplier</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Invoice #</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Invoice Date</th>
+                      <th className="px-4 py-3 min-w-64">Items / Details</th>
+                      <th className="px-4 py-3 text-center whitespace-nowrap">Total Qty</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Status</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Tax (₹)</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Net Amount (₹)</th>
+                    </>
+                  )}
+
+                  {activeTab === 'inventory' && (
+                    <>
+                      <th className="px-4 py-3 whitespace-nowrap">Item Name</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Model / Spec</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Category</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Brand</th>
+                      <th className="px-4 py-3 text-center whitespace-nowrap">Stock Qty</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Cost Price (₹)</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Selling Price (₹)</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap font-bold">Stock Value (₹)</th>
+                    </>
+                  )}
+
+                  {activeTab === 'expenses' && (
+                    <>
+                      <th className="px-4 py-3 whitespace-nowrap">Category</th>
+                      <th className="px-4 py-3 min-w-64">Particulars / Description</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Amount (₹)</th>
+                    </>
+                  )}
+
+                  {activeTab === 'ledger' && (
+                    <>
+                      <th className="px-4 py-3 whitespace-nowrap">Voucher Type</th>
+                      <th className="px-4 py-3 min-w-64">Particulars</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Debit (₹)</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Credit (₹)</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap font-bold">Running Balance (₹)</th>
+                    </>
+                  )}
+
+                  {activeTab === 'products' && (
+                    <>
+                      <th className="px-4 py-3 whitespace-nowrap">Product Name</th>
+                      <th className="px-4 py-3 whitespace-nowrap">Model</th>
+                      <th className="px-4 py-3 text-center whitespace-nowrap">Units Sold</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Net Revenue (₹)</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-hairline">
+                {/* 1. SALES ROWS */}
+                {activeTab === 'sales' && sales.map((sale, idx) => (
+                  <tr key={sale.id} className="hover:bg-surface-soft/60 transition-colors">
+                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{sale.date.split(' ')[0]}</td>
+                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{sale.invoice_number || `INV-${sale.id}`}</td>
+                    <td className="px-4 py-3 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in Customer'}</td>
+                    <td className="px-4 py-3 text-body max-w-xs truncate">{sale.products_bought || '-'}</td>
+                    <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{sale.total_quantity || 0}</td>
+                    <td className="px-4 py-3 text-right text-muted tabular-nums">₹{(sale.tax_amount || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{sale.net_amount.toFixed(2)}</td>
+                  </tr>
+                ))}
+
+                {/* 2. PURCHASES ROWS */}
+                {activeTab === 'purchases' && purchases.map((purchase, idx) => (
+                  <tr key={purchase.id} className="hover:bg-surface-soft/60 transition-colors">
+                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.date.split(' ')[0]}</td>
+                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{purchase.supplier_name}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.invoice_number}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.supplier_invoice_date || '-'}</td>
+                    <td className="px-4 py-3 text-body max-w-xs truncate">{purchase.products_bought || '-'}</td>
+                    <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{purchase.total_quantity || 0}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                        {purchase.status || 'Recorded'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right text-muted tabular-nums">₹{(purchase.tax_amount || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{purchase.net_amount.toFixed(2)}</td>
+                  </tr>
+                ))}
+
+                {/* 3. INVENTORY STOCK ROWS */}
+                {activeTab === 'inventory' && inventory.map((item, idx) => (
+                  <tr key={item.id} className="hover:bg-surface-soft/60 transition-colors">
+                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{item.name}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{item.model || '-'}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{item.group_name}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{item.brand_name}</td>
+                    <td className="px-4 py-3 text-center font-semibold text-ink tabular-nums whitespace-nowrap">
+                      {item.stock_quantity} {item.unit}
+                    </td>
+                    <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.purchase_price.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.selling_price.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">₹{item.stock_valuation.toFixed(2)}</td>
+                  </tr>
+                ))}
+
+                {/* 4. EXPENSES ROWS */}
+                {activeTab === 'expenses' && expenses.map((expense, idx) => (
+                  <tr key={expense.id} className="hover:bg-surface-soft/60 transition-colors">
+                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{expense.date.split(' ')[0]}</td>
+                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{expense.category}</td>
+                    <td className="px-4 py-3 text-body">{expense.description || '-'}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{expense.amount.toFixed(2)}</td>
+                  </tr>
+                ))}
+
+                {/* 5. PARTY LEDGER ROWS */}
+                {activeTab === 'ledger' && partyLedgerResult && partyLedgerResult.entries.map((entry, idx) => (
+                  <tr key={idx} className="hover:bg-surface-soft/60 transition-colors">
+                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                    <td className="px-4 py-3 text-muted whitespace-nowrap">{entry.date.split(' ')[0]}</td>
+                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        entry.type === 'Sale' ? 'bg-primary/10 text-primary' :
+                        entry.type === 'Purchase' ? 'bg-amber-500/10 text-amber-600' :
+                        entry.type === 'Payment' ? 'bg-emerald-500/10 text-emerald-600' :
+                        'bg-rose-500/10 text-rose-600'
+                      }`}>
+                        {entry.type}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-body">{entry.description}</td>
+                    <td className="px-4 py-3 text-right font-medium text-ink tabular-nums">
+                      {entry.debit > 0 ? `₹${entry.debit.toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      {entry.credit > 0 ? `₹${entry.credit.toFixed(2)}` : '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">
+                      ₹{Math.abs(entry.balance).toFixed(2)} {entry.balance >= 0 ? '(Dr)' : '(Cr)'}
+                    </td>
+                  </tr>
+                ))}
+
+                {/* 6. PRODUCT SALES ROWS */}
+                {activeTab === 'products' && productSales.map((ps, idx) => (
+                  <tr key={idx} className="hover:bg-surface-soft/60 transition-colors">
+                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                    <td className="px-4 py-3 font-semibold text-ink">{ps.product_name}</td>
+                    <td className="px-4 py-3 text-muted">{ps.model || '-'}</td>
+                    <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{ps.total_quantity} {ps.unit || ''}</td>
+                    <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">₹{ps.total_revenue.toFixed(2)}</td>
+                  </tr>
+                ))}
+
+                {/* Empty State */}
+                {((activeTab === 'sales' && sales.length === 0) ||
+                  (activeTab === 'purchases' && purchases.length === 0) ||
+                  (activeTab === 'inventory' && inventory.length === 0) ||
+                  (activeTab === 'expenses' && expenses.length === 0) ||
+                  (activeTab === 'ledger' && (!partyLedgerResult || partyLedgerResult.entries.length === 0)) ||
+                  (activeTab === 'products' && productSales.length === 0)) && (
+                  <tr>
+                    <td colSpan={10} className="p-16 text-center text-muted">
+                      <p className="font-semibold text-sm text-ink">No records found</p>
+                      <p className="text-xs text-muted mt-1">Try adjusting the date range or selection criteria above.</p>
+                    </td>
+                  </tr>
                 )}
-                <th className="px-6 py-4 text-right whitespace-nowrap">{activeTab === 'expenses' ? 'Amount (₹)' : 'Net Amount (₹)'}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-hairline">
-              {activeTab === 'sales' && sales.map((sale) => (
-                <tr key={sale.id} className={`hover:bg-surface-soft transition-colors border-b border-hairline last:border-0 align-top ${sale.status === 'Returned' ? 'bg-red-50/30' : ''}`}>
-                  <td className="px-6 py-4 text-muted text-sm font-medium whitespace-nowrap">{sale.date.split(' ')[0]}</td>
-                  <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.invoice_number || sale.id}</td>
-                  <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in Customer'}</td>
-                  <td className="px-6 py-4 text-sm leading-relaxed">
-                    <div className="flex flex-col gap-1">
-                      {sale.products_bought ? sale.products_bought.split('\n').map((line, i) => (
-                        <div key={i} className="bg-slate-100 px-2 py-1 rounded text-slate-700 font-medium inline-block w-max">
-                          {line}
-                        </div>
-                      )) : '-'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-center font-medium text-ink whitespace-nowrap">{sale.total_quantity || 0}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      sale.status === 'Paid' ? 'bg-success/10 text-success' :
-                      sale.status === 'Returned' ? 'bg-signature-coral/10 text-signature-coral' :
-                      sale.status === 'Partial' ? 'bg-signature-mustard/10 text-signature-mustard' :
-                      'bg-slate-200 text-slate-600'
-                    }`}>
-                      {sale.status || 'Paid'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-muted text-sm whitespace-nowrap">{(sale.net_amount - sale.tax_amount).toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right text-muted text-sm whitespace-nowrap">{sale.tax_amount.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right font-medium text-ink text-base whitespace-nowrap">₹{sale.net_amount.toFixed(2)}</td>
-                </tr>
-              ))}
+              </tbody>
+            </table>
+          </div>
 
-              {activeTab === 'purchases' && purchases.map((purchase) => (
-                <tr key={purchase.id} className={`hover:bg-surface-soft transition-colors border-b border-hairline last:border-0 align-top ${purchase.status === 'Returned' ? 'bg-red-50/30' : ''}`}>
-                  <td className="px-6 py-4 text-muted text-sm font-medium whitespace-nowrap">{purchase.date.split(' ')[0]}</td>
-                  <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{purchase.supplier_name}</td>
-                  <td className="px-6 py-4 text-muted text-sm whitespace-nowrap">{purchase.invoice_number}</td>
-                  <td className="px-6 py-4 text-sm leading-relaxed">
-                    <div className="flex flex-col gap-1">
-                      {purchase.products_bought ? purchase.products_bought.split('\n').map((line, i) => (
-                        <div key={i} className="bg-slate-100 px-2 py-1 rounded text-slate-700 font-medium inline-block w-max">
-                          {line}
-                        </div>
-                      )) : '-'}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-center font-medium text-ink whitespace-nowrap">{purchase.total_quantity || 0}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      purchase.status === 'Paid' ? 'bg-success/10 text-success' :
-                      purchase.status === 'Returned' ? 'bg-signature-coral/10 text-signature-coral' :
-                      purchase.status === 'Partial' ? 'bg-signature-mustard/10 text-signature-mustard' :
-                      'bg-slate-200 text-slate-600'
-                    }`}>
-                      {purchase.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right text-muted text-sm whitespace-nowrap">{(purchase.net_amount - purchase.tax_amount).toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right text-muted text-sm whitespace-nowrap">{purchase.tax_amount.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-right font-medium text-ink text-base whitespace-nowrap">₹{purchase.net_amount.toFixed(2)}</td>
-                </tr>
-              ))}
-
-              {activeTab === 'expenses' && expenses.map((expense) => (
-                <tr key={expense.id} className="hover:bg-surface-soft transition-colors border-b border-hairline last:border-0 align-top">
-                  <td className="px-6 py-4 text-muted text-sm font-medium whitespace-nowrap">{new Date(expense.date).toLocaleString()}</td>
-                  <td className="px-6 py-4 font-medium text-ink whitespace-nowrap">{expense.category}</td>
-                  <td className="px-6 py-4 text-muted text-sm leading-relaxed">{expense.description || '-'}</td>
-                  <td className="px-6 py-4 text-right font-medium text-ink text-base whitespace-nowrap">₹{expense.amount.toFixed(2)}</td>
-                </tr>
-              ))}
-
-              {(activeTab === 'sales' ? sales : activeTab === 'purchases' ? purchases : expenses).length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-16 text-center text-muted">
-                    <p className="font-medium text-sm">No records found for the selected period.</p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
+
       </div>
-    </div>
+    </>
   );
 }

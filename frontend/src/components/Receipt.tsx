@@ -4,6 +4,8 @@ import type { CartItem } from '../lib/db';
 
 export interface ReceiptData {
   invoiceNumber: string;
+  isQuotation?: boolean;
+  quotationNumber?: string;
   date: string;
   customerName: string;
   customerDetails?: {
@@ -21,6 +23,11 @@ export interface ReceiptData {
   discount: number;
   netAmount: number;
   paidAmount: number;
+  paymentMethod?: string;
+  chequeNo?: string;
+  bankName?: string;
+  chequeDate?: string;
+  sourceLocationName?: string;
 }
 
 interface ReceiptProps {
@@ -106,7 +113,7 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
   const shopName = localStorage.getItem('shopName') || 'Electro Hub';
   const shopAddress = localStorage.getItem('shopAddress') || '123 Market Street, City';
   const shopPhone = localStorage.getItem('shopPhone') || '+91 9876543210';
-  const shopGSTIN = localStorage.getItem('shopGSTIN') || '27XXXXX1234X1X1';
+  const shopGSTIN = (localStorage.getItem('shopGSTIN') || '27XXXXX1234X1X1').toUpperCase();
 
   // HSN summary grouping
   const hsnSummary: Record<string, { taxable: number, cgstRate: number, cgstAmount: number, sgstRate: number, sgstAmount: number }> = {};
@@ -143,7 +150,9 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
         `}
       </style>
 
-      <h1 className="text-center text-xl font-bold mb-1">TAX INVOICE</h1>
+      <h1 className="text-center text-xl font-bold mb-1">
+        {data.isQuotation ? 'ESTIMATE / QUOTATION' : 'TAX INVOICE'}
+      </h1>
       
       <div className="tally-border flex flex-col w-full text-[11px] leading-tight">
         
@@ -158,11 +167,11 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
               <div>GSTIN : {shopGSTIN}</div>
             </div>
             <div className="p-2 min-h-[120px]">
-              <div>Billed To</div>
+              <div>{data.isQuotation ? 'Quotation For' : 'Billed To'}</div>
               <div className="font-bold">{data.customerDetails?.name || data.customerName}</div>
               <div>{data.customerDetails?.address}</div>
               {data.customerDetails?.phone && <div>Mobile: {data.customerDetails.phone}</div>}
-              {data.customerDetails?.gstin && <div>GSTIN: {data.customerDetails.gstin}</div>}
+              {data.customerDetails?.gstin && <div>GSTIN: {data.customerDetails.gstin.toUpperCase()}</div>}
             </div>
           </div>
           
@@ -170,8 +179,8 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           <div className="w-1/2 flex flex-col">
             <div className="flex tally-border-b">
               <div className="w-1/2 tally-border-r p-2">
-                <div>Invoice No.</div>
-                <div className="font-bold">{data.invoiceNumber}</div>
+                <div>{data.isQuotation ? 'Quotation No.' : 'Invoice No.'}</div>
+                <div className="font-bold">{data.isQuotation ? (data.quotationNumber || data.invoiceNumber) : data.invoiceNumber}</div>
               </div>
               <div className="w-1/2 p-2">
                 <div>Dated</div>
@@ -180,11 +189,16 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
             </div>
             <div className="flex tally-border-b flex-1">
               <div className="w-1/2 tally-border-r p-2">
-                <div>Mode/Terms of Payment</div>
-                <div className="font-bold">{data.paidAmount >= data.netAmount ? 'Cash/Paid' : 'Credit'}</div>
+                <div>{data.isQuotation ? 'Validity' : 'Mode/Terms of Payment'}</div>
+                <div className="font-bold">{data.isQuotation ? 'Valid for 30 Days' : (data.paidAmount >= data.netAmount ? 'Cash/Paid' : 'Credit')}</div>
               </div>
               <div className="w-1/2 p-2">
-                {/* Empty block to fill space */}
+                {data.sourceLocationName && data.sourceLocationName !== 'Main Shop' ? (
+                  <>
+                    <div>Dispatched From</div>
+                    <div className="font-bold">{data.sourceLocationName}</div>
+                  </>
+                ) : null}
               </div>
             </div>
           </div>
@@ -271,10 +285,21 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           </tbody>
         </table>
 
-        {/* Amount Chargeable in words */}
-        <div className="p-2 tally-border-b border-t-0">
-          <div>Amount Chargeable (in words)</div>
-          <div className="font-bold">{numberToWords(Math.round(data.netAmount))}</div>
+        {/* Amount Chargeable in words & Payment Status */}
+        <div className="p-2 tally-border-b border-t-0 flex justify-between items-start">
+          <div>
+            <div>Amount Chargeable (in words)</div>
+            <div className="font-bold">{numberToWords(Math.round(data.netAmount))}</div>
+          </div>
+          {!data.isQuotation && (
+            <div className="text-right text-[11px]">
+              <div>Mode: <span className="font-bold">{data.paymentMethod || 'Cash'}</span></div>
+              {data.chequeNo && (
+                <div className="font-mono">Chq #{data.chequeNo} {data.bankName ? `(${data.bankName})` : ''}</div>
+              )}
+              <div>Paid: <span className="font-bold">₹{data.paidAmount.toFixed(2)}</span> | Balance: <span className="font-bold">₹{Math.max(0, data.netAmount - data.paidAmount).toFixed(2)}</span></div>
+            </div>
+          )}
         </div>
 
         {/* HSN Summary */}
@@ -328,8 +353,14 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
             <div>Company's GST No. : <span className="font-bold">{shopGSTIN}</span></div>
             <div className="mt-4">
               <div className="underline mb-1">Declaration</div>
-              <div>We declare that this invoice shows the actual price of the goods</div>
-              <div>described and that all particulars are true and correct</div>
+              {data.isQuotation ? (
+                <div>We declare that this quotation/estimate is valid for 30 days unless revoked and is issued for information purposes.</div>
+              ) : (
+                <>
+                  <div>We declare that this invoice shows the actual price of the goods</div>
+                  <div>described and that all particulars are true and correct</div>
+                </>
+              )}
             </div>
           </div>
           <div className="w-1/2 tally-border-l tally-border-t p-2 flex flex-col justify-between -m-2 ml-2">
@@ -340,7 +371,7 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
       </div>
       
       <div className="text-center mt-2 text-xs">
-        This is a Computer Generated Invoice
+        {data.isQuotation ? 'This is a Computer Generated Quotation / Estimate' : 'This is a Computer Generated Invoice'}
       </div>
     </div>
   );
