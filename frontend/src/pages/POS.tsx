@@ -1,16 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
-  Search, IndianRupee, X, ShoppingCart, User, 
+  Search, IndianRupee, X, ShoppingCart, User, UserPlus,
   FileText, Clock, CheckCircle2, ArrowRight, Trash2, Printer, Plus, Check,
-  CreditCard, Calendar, Store, Building2
+  CreditCard, Calendar, Store, Building2, Edit, Eye, Truck
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
-  getSellableProducts, getCustomers, recordSale, getSaleById, updateSaleBill,
-  createQuotation, getQuotations, getQuotationById, markQuotationConverted, deleteQuotation,
+  getSellableProducts, getCustomers, addCustomer, recordSale, getSaleById, updateSaleBill,
+  createQuotation, updateQuotation, getQuotations, getQuotationById, markQuotationConverted, deleteQuotation,
   getNextInvoiceNumber, getNextQuotationNumber, isPdcDate, getWarehouses
 } from '../lib/db';
-import type { Product, CartItem, Customer, Quotation, Warehouse } from '../lib/db';
+import type { Product, CartItem, Customer, Quotation, Warehouse, DispatchDetails } from '../lib/db';
 import { Receipt } from '../components/Receipt';
 import type { ReceiptData } from '../components/Receipt';
 
@@ -26,7 +26,11 @@ export default function POS() {
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
   const editSaleIdParam = searchParams.get('editId');
+  const viewSaleIdParam = searchParams.get('viewId');
   const editSaleId = editSaleIdParam ? Number(editSaleIdParam) : undefined;
+  const viewSaleId = viewSaleIdParam ? Number(viewSaleIdParam) : undefined;
+  const isViewOnly = Boolean(viewSaleId && !editSaleId);
+  const activeSaleId = editSaleId || viewSaleId;
   
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<number>(0);
@@ -38,11 +42,14 @@ export default function POS() {
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Cheque'>('Cash');
   const [posChequeNo, setPosChequeNo] = useState('');
   const [posBankName, setPosBankName] = useState('');
-  const [posChequeDate, setPosChequeDate] = useState(() => {
+  const getLocalDate = () => {
     const d = new Date();
     const offset = d.getTimezoneOffset() * 60000;
     return new Date(d.getTime() - offset).toISOString().split('T')[0];
-  });
+  };
+
+  const [billDate, setBillDate] = useState<string>(getLocalDate);
+  const [posChequeDate, setPosChequeDate] = useState(getLocalDate);
   const [printData, setPrintData] = useState<ReceiptData | null>(null);
   
   const [customerSearch, setCustomerSearch] = useState('');
@@ -58,16 +65,45 @@ export default function POS() {
   const [quotationStatusFilter, setQuotationStatusFilter] = useState<'All' | 'Pending' | 'Converted'>('All');
   const [convertingQuotationId, setConvertingQuotationId] = useState<number | null>(null);
   const [convertingQuotationNumber, setConvertingQuotationNumber] = useState<string | null>(null);
+  const [editingQuotationId, setEditingQuotationId] = useState<number | null>(null);
+  const [editingQuotationNumber, setEditingQuotationNumber] = useState<string | null>(null);
+  const [editingInvoiceNumber, setEditingInvoiceNumber] = useState<string | null>(null);
   const [nextInvoiceNo, setNextInvoiceNo] = useState<string>('');
   const [nextQuotationNo, setNextQuotationNo] = useState<string>('');
   const [quotationNotes, setQuotationNotes] = useState<string>('');
+
+  // Dispatch & Transport Details (required for sales >= 1 Lakh or on-demand delivery)
+  const [dispatchDetails, setDispatchDetails] = useState<DispatchDetails>({
+    ewayBillNo: '',
+    dispatchDocNo: '',
+    dispatchedThrough: '',
+    destination: '',
+    carrierName: '',
+    billOfLadingNo: '',
+    motorVehicleNo: '',
+    termsOfDelivery: ''
+  });
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+
+  const hasDispatchDetails = Boolean(
+    dispatchDetails.ewayBillNo?.trim() ||
+    dispatchDetails.dispatchDocNo?.trim() ||
+    dispatchDetails.motorVehicleNo?.trim() ||
+    dispatchDetails.dispatchedThrough?.trim() ||
+    dispatchDetails.destination?.trim() ||
+    dispatchDetails.carrierName?.trim() ||
+    dispatchDetails.billOfLadingNo?.trim() ||
+    dispatchDetails.termsOfDelivery?.trim()
+  );
   
   useEffect(() => {
     if (customerId === '') {
       setCustomerSearch('');
     } else {
       const c = customers.find(c => c.id === customerId);
-      if (c) setCustomerSearch(c.name);
+      if (c) {
+        setCustomerSearch(c.name);
+      }
     }
   }, [customerId, customers]);
 
@@ -75,6 +111,56 @@ export default function POS() {
     c.name.toLowerCase().includes(customerSearch.toLowerCase()) || 
     (c.phone && c.phone.includes(customerSearch))
   );
+
+  // Quick Add Customer state & handlers
+  const [isQuickCustomerModalOpen, setIsQuickCustomerModalOpen] = useState(false);
+  const [quickCustomerName, setQuickCustomerName] = useState('');
+  const [quickCustomerPhone, setQuickCustomerPhone] = useState('');
+  const [quickCustomerGstin, setQuickCustomerGstin] = useState('');
+  const [quickCustomerAddress, setQuickCustomerAddress] = useState('');
+  const [isSavingQuickCustomer, setIsSavingQuickCustomer] = useState(false);
+
+  function openQuickCustomerModal(initialName: string = '') {
+    setQuickCustomerName(initialName);
+    setQuickCustomerPhone('');
+    setQuickCustomerGstin('');
+    setQuickCustomerAddress('');
+    setIsQuickCustomerModalOpen(true);
+  }
+
+  function closeQuickCustomerModal() {
+    setIsQuickCustomerModalOpen(false);
+    setQuickCustomerName('');
+    setQuickCustomerPhone('');
+    setQuickCustomerGstin('');
+    setQuickCustomerAddress('');
+  }
+
+  async function handleSaveQuickCustomer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!quickCustomerName.trim()) return;
+
+    try {
+      setIsSavingQuickCustomer(true);
+      const cleanName = quickCustomerName.trim();
+      const cleanPhone = quickCustomerPhone.trim();
+      const cleanGstin = quickCustomerGstin.replace(/\s+/g, '').toUpperCase();
+      const cleanAddress = quickCustomerAddress.trim();
+
+      const newId = await addCustomer(cleanName, cleanPhone, '', cleanAddress, cleanGstin);
+      const updatedList = await getCustomers();
+      setCustomers(updatedList);
+      setCustomerId(newId);
+      setCustomerSearch(cleanName);
+      closeQuickCustomerModal();
+      setIsCustomerDropdownOpen(false);
+    } catch (err) {
+      console.error('Failed to create customer:', err);
+      alert(`Error creating customer: ${err}`);
+    } finally {
+      setIsSavingQuickCustomer(false);
+    }
+  }
 
   const [enableSalesGST, setEnableSalesGST] = useState(() => {
     const val = localStorage.getItem('enableSalesGST');
@@ -94,6 +180,8 @@ export default function POS() {
       
       const tVal = localStorage.getItem('salesTaxMethod') as 'exclusive' | 'inclusive';
       setSalesTaxMethod(tVal || (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive');
+
+      refreshNextNumbers();
     };
     window.addEventListener('preferencesUpdated', handlePrefChange);
     return () => window.removeEventListener('preferencesUpdated', handlePrefChange);
@@ -103,10 +191,10 @@ export default function POS() {
     loadProducts();
     refreshQuotations();
     refreshNextNumbers();
-    if (editSaleId) {
-      loadEditData(editSaleId);
+    if (activeSaleId) {
+      loadEditData(activeSaleId);
     }
-  }, [editSaleId]);
+  }, [activeSaleId]);
 
   async function refreshQuotations() {
     try {
@@ -132,6 +220,8 @@ export default function POS() {
     try {
       const s = await getSaleById(id);
       if (s) {
+        setEditingInvoiceNumber(s.invoice_number || `Bill #${s.id}`);
+        if (s.date) setBillDate(s.date.split(' ')[0]);
         if (s.customer_id) setCustomerId(s.customer_id);
         setCart(s.items.map((i: any) => ({
           id: i.product_id,
@@ -144,7 +234,13 @@ export default function POS() {
           cgst_percentage: i.cgst_percentage,
           sgst_percentage: i.sgst_percentage,
           gst_percentage: i.gst_percentage,
-          stock_quantity: i.stock_quantity
+          stock_quantity: i.stock_quantity,
+          shop_stock: i.shop_stock,
+          warehouse_stocks: i.warehouse_stocks,
+          item_source_type: i.item_source_type || 'shop',
+          item_warehouse_id: i.item_warehouse_id || null,
+          item_warehouse_name: i.item_warehouse_name || (i.item_source_type === 'warehouse' ? 'Godown' : 'Main Shop'),
+          cart_key: `${i.product_id}_${i.item_source_type || 'shop'}_${i.item_warehouse_id || 0}`
         } as CartItem)));
         if (s.source_type) setSourceType(s.source_type as 'shop' | 'warehouse');
         if (s.source_warehouse_id) setSourceWarehouseId(s.source_warehouse_id);
@@ -152,11 +248,120 @@ export default function POS() {
         setDiscount(s.discount);
         setPaidAmount(s.paid_amount || 0);
         if (s.payment_method) setPaymentMethod(s.payment_method as any);
+
+        if (s.dispatchDetails) {
+          setDispatchDetails(s.dispatchDetails);
+        } else if (s.dispatch_details) {
+          try {
+            setDispatchDetails(JSON.parse(s.dispatch_details));
+          } catch (e) {
+            // ignore
+          }
+        } else {
+          setDispatchDetails({
+            ewayBillNo: '',
+            dispatchDocNo: '',
+            dispatchedThrough: '',
+            destination: '',
+            carrierName: '',
+            billOfLadingNo: '',
+            motorVehicleNo: '',
+            termsOfDelivery: ''
+          });
+        }
       }
     } catch (e) {
       console.error(e);
     }
   }
+
+  function handleCancelEditBill() {
+    (window as any).__isEditingActive = false;
+    setCart([]);
+    setCustomerId('');
+    setDiscount(0);
+    setPaidAmount(0);
+    setEditingInvoiceNumber(null);
+    setBillDate(getLocalDate());
+    setDispatchDetails({
+      ewayBillNo: '',
+      dispatchDocNo: '',
+      dispatchedThrough: '',
+      destination: '',
+      carrierName: '',
+      billOfLadingNo: '',
+      motorVehicleNo: '',
+      termsOfDelivery: ''
+    });
+    if (location.state?.from === 'contacts' && location.state?.partyId) {
+      navigate('/contacts', {
+        state: {
+          activeTab: location.state.partyType || 'customers',
+          selectedPartyId: location.state.partyId
+        }
+      });
+    } else {
+      navigate('/daybook', {
+        state: location.state || { activeTab: 'sales' }
+      });
+    }
+  }
+
+  function handleCancelEditQuotation() {
+    (window as any).__isEditingActive = false;
+    setEditingQuotationId(null);
+    setEditingQuotationNumber(null);
+    setCart([]);
+    setDiscount(0);
+    setQuotationNotes('');
+    setBillDate(getLocalDate());
+    setPosMode('billing');
+  }
+
+  // Global Edit Mode Lock flag for app-wide navigation prevention
+  useEffect(() => {
+    if (activeSaleId || editingQuotationId) {
+      (window as any).__isEditingActive = true;
+    } else {
+      (window as any).__isEditingActive = false;
+    }
+    return () => {
+      (window as any).__isEditingActive = false;
+    };
+  }, [activeSaleId, editingQuotationId]);
+
+  // Global Escape key handler to cancel active bill or quotation edit
+  useEffect(() => {
+    const handleGlobalEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (completedSaleModal) return;
+        if (showDispatchModal) {
+          setShowDispatchModal(false);
+          return;
+        }
+        if (isQuickCustomerModalOpen) {
+          setIsQuickCustomerModalOpen(false);
+          return;
+        }
+        if (isQuotationsModalOpen) {
+          setIsQuotationsModalOpen(false);
+          return;
+        }
+
+        if (activeSaleId) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCancelEditBill();
+        } else if (editingQuotationId) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCancelEditQuotation();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleGlobalEsc);
+    return () => window.removeEventListener('keydown', handleGlobalEsc);
+  }, [activeSaleId, editingQuotationId, completedSaleModal, isQuotationsModalOpen, isQuickCustomerModalOpen, location.state]);
 
   async function loadProducts(st?: 'shop' | 'warehouse', whId?: number | null) {
     try {
@@ -176,6 +381,10 @@ export default function POS() {
     }
   }
 
+  function getItemCartKey(item: { id: number; item_source_type?: string; item_warehouse_id?: number | null }): string {
+    return `${item.id}_${item.item_source_type || 'shop'}_${item.item_warehouse_id || 0}`;
+  }
+
   // Reload products dynamically when source inventory location changes
   useEffect(() => {
     const whIdToUse = sourceType === 'warehouse' && sourceWarehouseId !== '' ? Number(sourceWarehouseId) : null;
@@ -183,11 +392,20 @@ export default function POS() {
       setProducts(newProducts);
       setCart(prevCart => prevCart.map(cartItem => {
         const matching = newProducts.find(p => p.id === cartItem.id);
-        const availStock = matching ? matching.stock_quantity : 0;
+        const itemSrc = cartItem.item_source_type || 'shop';
+        const itemWh = cartItem.item_warehouse_id;
+        let availStock = 0;
+        if (itemSrc === 'warehouse' && itemWh) {
+          availStock = matching?.warehouse_stocks?.[itemWh] ?? 0;
+        } else {
+          availStock = matching?.shop_stock ?? matching?.stock_quantity ?? 0;
+        }
         return {
           ...cartItem,
           stock_quantity: availStock,
-          cart_qty: posMode === 'billing' ? Math.min(availStock, cartItem.cart_qty) : cartItem.cart_qty
+          shop_stock: matching?.shop_stock ?? cartItem.shop_stock,
+          warehouse_stocks: matching?.warehouse_stocks ?? cartItem.warehouse_stocks,
+          cart_qty: posMode === 'billing' ? Math.min(availStock > 0 ? availStock : 1, cartItem.cart_qty) : cartItem.cart_qty
         };
       }));
     }).catch(console.error);
@@ -229,32 +447,137 @@ export default function POS() {
     }
   };
 
-  function addToCart(product: Product) {
-    if (posMode === 'billing' && product.stock_quantity <= 0) {
-      alert('This product is out of stock!');
+  function addToCart(product: Product, forcedSourceType?: 'shop' | 'warehouse', forcedWhId?: number | null) {
+    if (isViewOnly) return;
+
+    // Default source: Main Shop ('shop'), unless forced or if global sourceType is set to warehouse
+    const targetSource: 'shop' | 'warehouse' = forcedSourceType || (sourceType === 'warehouse' ? 'warehouse' : 'shop');
+    const targetWhId: number | null = targetSource === 'warehouse' 
+      ? (forcedWhId !== undefined ? forcedWhId : (sourceWarehouseId !== '' ? Number(sourceWarehouseId) : (warehouses[0]?.id || null)))
+      : null;
+
+    let targetAvailStock = 0;
+    let targetWhName = 'Main Shop';
+    if (targetSource === 'warehouse' && targetWhId) {
+      targetAvailStock = product.warehouse_stocks?.[targetWhId] ?? 0;
+      targetWhName = warehouses.find(w => w.id === targetWhId)?.name || 'Godown';
+    } else {
+      targetAvailStock = product.shop_stock ?? product.stock_quantity ?? 0;
+    }
+
+    if (posMode === 'billing' && targetAvailStock <= 0) {
+      // If adding from Shop and Shop has 0, but a Godown has stock, offer to add from Godown!
+      const godownsWithStock = warehouses.filter(w => (product.warehouse_stocks?.[w.id] || 0) > 0);
+      if (targetSource === 'shop' && godownsWithStock.length > 0) {
+        const firstWh = godownsWithStock[0];
+        const confirmAdd = confirm(
+          `Main Shop is out of stock for "${product.name}", but "${firstWh.name}" has ${product.warehouse_stocks?.[firstWh.id]} ${product.unit || 'pc'} in stock.\n\nDo you want to add it from "${firstWh.name}"?`
+        );
+        if (confirmAdd) {
+          addToCart(product, 'warehouse', firstWh.id);
+          return;
+        }
+      }
+      alert(`"${product.name}" is out of stock in ${targetWhName}!`);
       return;
     }
+
+    const targetKey = `${product.id}_${targetSource}_${targetWhId || 0}`;
+
     setCart(prev => {
-      const existing = prev.find(item => item.id === product.id);
+      const existing = prev.find(item => getItemCartKey(item) === targetKey);
       if (existing) {
-        if (posMode === 'billing' && existing.cart_qty >= product.stock_quantity) {
-          alert('Cannot add more than available stock!');
+        if (posMode === 'billing' && existing.cart_qty >= targetAvailStock) {
+          alert(`Cannot add more than available stock (${targetAvailStock}) in ${targetWhName}!`);
           return prev;
         }
         return prev.map(item => 
-          item.id === product.id ? { ...item, cart_qty: item.cart_qty + 1 } : item
+          getItemCartKey(item) === targetKey ? { ...item, cart_qty: item.cart_qty + 1 } : item
         );
       }
-      return [...prev, { ...product, cart_qty: 1 }];
+      return [
+        ...prev, 
+        { 
+          ...product, 
+          cart_qty: 1,
+          item_source_type: targetSource,
+          item_warehouse_id: targetWhId,
+          item_warehouse_name: targetWhName,
+          stock_quantity: targetAvailStock,
+          cart_key: targetKey
+        }
+      ];
     });
     setSearch('');
   }
 
-  function setQty(id: number, qty: number) {
+  function handleChangeItemSource(item: CartItem, newSourceStr: string) {
+    if (isViewOnly) return;
+    
+    let newSourceType: 'shop' | 'warehouse' = 'shop';
+    let newWhId: number | null = null;
+    let newWhName = 'Main Shop';
+    let newStock = item.shop_stock ?? 0;
+
+    if (newSourceStr.startsWith('wh_')) {
+      newSourceType = 'warehouse';
+      newWhId = Number(newSourceStr.replace('wh_', ''));
+      const wh = warehouses.find(w => w.id === newWhId);
+      newWhName = wh?.name || 'Godown';
+      newStock = item.warehouse_stocks?.[newWhId] ?? 0;
+    }
+
+    if (posMode === 'billing' && newStock <= 0) {
+      alert(`No stock available for "${item.name}" in ${newWhName}! (Stock: 0)`);
+      return;
+    }
+
+    const currentKey = getItemCartKey(item);
+    const newKey = `${item.id}_${newSourceType}_${newWhId || 0}`;
+
+    setCart(prev => {
+      const existingNew = prev.find(i => getItemCartKey(i) === newKey);
+      if (existingNew && currentKey !== newKey) {
+        const combinedQty = posMode === 'billing' 
+          ? Math.min(newStock, existingNew.cart_qty + item.cart_qty)
+          : existingNew.cart_qty + item.cart_qty;
+        
+        return prev
+          .filter(i => getItemCartKey(i) !== currentKey)
+          .map(i => getItemCartKey(i) === newKey ? { ...i, cart_qty: combinedQty, stock_quantity: newStock } : i);
+      }
+
+      return prev.map(i => {
+        if (getItemCartKey(i) === currentKey) {
+          const validQty = posMode === 'billing' ? Math.min(newStock, i.cart_qty) : i.cart_qty;
+          return {
+            ...i,
+            item_source_type: newSourceType,
+            item_warehouse_id: newWhId,
+            item_warehouse_name: newWhName,
+            stock_quantity: newStock,
+            cart_qty: Math.max(1, validQty),
+            cart_key: newKey
+          };
+        }
+        return i;
+      });
+    });
+  }
+
+  function handleAddFromGodown(item: CartItem, warehouseId: number) {
+    if (isViewOnly) return;
+    const prod = products.find(p => p.id === item.id) || item;
+    addToCart(prod, 'warehouse', warehouseId);
+  }
+
+  function setQty(cartKey: string, qty: number) {
+    if (isViewOnly) return;
     setCart(prev => prev.map(item => {
-      if (item.id === id) {
+      if (getItemCartKey(item) === cartKey) {
+        const maxStock = item.stock_quantity;
         const newQty = posMode === 'billing' 
-          ? Math.min(item.stock_quantity, Math.max(0, qty))
+          ? Math.min(maxStock > 0 ? maxStock : 1, Math.max(0, qty))
           : Math.max(0, qty);
         return { ...item, cart_qty: newQty };
       }
@@ -262,14 +585,16 @@ export default function POS() {
     }));
   }
 
-  function updateRate(id: number, newRate: number) {
+  function updateRate(cartKey: string, newRate: number) {
+    if (isViewOnly) return;
     setCart(prev => prev.map(item => 
-      item.id === id ? { ...item, selling_price: newRate } : item
+      getItemCartKey(item) === cartKey ? { ...item, selling_price: newRate } : item
     ));
   }
 
-  function removeFromCart(id: number) {
-    setCart(prev => prev.filter(item => item.id !== id));
+  function removeFromCart(cartKey: string) {
+    if (isViewOnly) return;
+    setCart(prev => prev.filter(item => getItemCartKey(item) !== cartKey));
   }
 
   // Global Ctrl + S shortcut handler
@@ -302,7 +627,16 @@ export default function POS() {
       if (e.key === 'Escape') {
         e.preventDefault();
         if (editSaleId) {
-          navigate('/daybook', { state: { activeTab: 'sales' } });
+          if (location.state?.from === 'contacts' && location.state?.partyId) {
+            navigate('/contacts', {
+              state: {
+                activeTab: location.state.partyType || 'customers',
+                selectedPartyId: location.state.partyId
+              }
+            });
+          } else {
+            navigate('/daybook', { state: { activeTab: 'sales' } });
+          }
         } else {
           setCompletedSaleModal(null);
           setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -352,6 +686,14 @@ export default function POS() {
       alert("Please select a warehouse stock source or create a warehouse first in Inventory.");
       return;
     }
+
+    // High value sale (>= ₹1,00,000 / 1 Lakh) check for mandatory transport & e-Way bill details
+    if (grandTotal >= 100000 && !hasDispatchDetails) {
+      setShowDispatchModal(true);
+      alert("⚠️ High-Value Sale (≥ ₹1,00,000):\nUnder GST guidelines, sales of ₹1 Lakh and above require e-Way Bill and transport / vehicle details.\n\nPlease enter the Dispatch Details to proceed.");
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const finalCustomerId = customerId === '' ? null : Number(customerId);
@@ -378,11 +720,13 @@ export default function POS() {
           paymentMethod === 'Cheque' ? posBankName.trim() : null,
           paymentMethod === 'Cheque' ? posChequeDate : null,
           sourceType,
-          sourceType === 'warehouse' ? Number(sourceWarehouseId) : null
+          sourceType === 'warehouse' ? Number(sourceWarehouseId) : null,
+          billDate,
+          hasDispatchDetails ? dispatchDetails : null
         );
         alert('Sale bill updated successfully!');
       } else {
-        invoiceNumber = await recordSale(
+        const saleRes = await recordSale(
           cart, 
           subtotal, 
           tax, 
@@ -395,13 +739,16 @@ export default function POS() {
           paymentMethod === 'Cheque' ? posBankName.trim() : null,
           paymentMethod === 'Cheque' ? posChequeDate : null,
           sourceType,
-          sourceType === 'warehouse' ? Number(sourceWarehouseId) : null
+          sourceType === 'warehouse' ? Number(sourceWarehouseId) : null,
+          billDate,
+          hasDispatchDetails ? dispatchDetails : null
         );
+        invoiceNumber = typeof saleRes === 'string' ? saleRes : saleRes.invoiceNumber;
+        const actualSaleId = (typeof saleRes === 'string' ? (Number(invoiceNumber.split('-')[1]) || 0) : saleRes.saleId) || 0;
 
         // If this sale was converted from a quotation, mark quotation as Converted
         if (convertingQuotationId) {
-          const saleIdNum = Number(invoiceNumber.split('-')[1]) || 0;
-          await markQuotationConverted(convertingQuotationId, saleIdNum, invoiceNumber);
+          await markQuotationConverted(convertingQuotationId, actualSaleId, invoiceNumber);
           setConvertingQuotationId(null);
           setConvertingQuotationNumber(null);
           await refreshQuotations();
@@ -415,7 +762,7 @@ export default function POS() {
       const receiptPayload: ReceiptData = {
         invoiceNumber,
         isQuotation: false,
-        date: new Date().toLocaleDateString('en-IN'),
+        date: new Date(billDate + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
         customerName: currentCustomer,
         customerDetails: currentCustomerObj ? {
           name: currentCustomerObj.name,
@@ -436,9 +783,11 @@ export default function POS() {
         chequeNo: paymentMethod === 'Cheque' ? posChequeNo.trim() : undefined,
         bankName: paymentMethod === 'Cheque' ? posBankName.trim() : undefined,
         chequeDate: paymentMethod === 'Cheque' ? posChequeDate : undefined,
-        sourceLocationName: sourceType === 'warehouse' ? (whObj ? whObj.name : 'Warehouse') : 'Main Shop'
+        sourceLocationName: sourceType === 'warehouse' ? (whObj ? whObj.name : 'Warehouse') : 'Main Shop',
+        dispatchDetails: hasDispatchDetails ? dispatchDetails : undefined
       };
 
+      (window as any).__isEditingActive = false;
       setPrintData(receiptPayload);
       setCompletedSaleModal(receiptPayload);
 
@@ -451,7 +800,18 @@ export default function POS() {
       setDiscountType('percentage');
       setCustomerId('');
       setPaidAmount('');
+      setBillDate(getLocalDate());
       setSourceType('shop');
+      setDispatchDetails({
+        ewayBillNo: '',
+        dispatchDocNo: '',
+        dispatchedThrough: '',
+        destination: '',
+        carrierName: '',
+        billOfLadingNo: '',
+        motorVehicleNo: '',
+        termsOfDelivery: ''
+      });
       if (warehouses.length > 0) setSourceWarehouseId(warehouses[0].id);
       loadProducts('shop', null);
       refreshNextNumbers();
@@ -477,15 +837,32 @@ export default function POS() {
     setIsProcessing(true);
     try {
       const finalCustomerId = customerId === '' ? null : Number(customerId);
-      const quotationNumber = await createQuotation(
-        cart,
-        subtotal,
-        tax,
-        discountAmount,
-        grandTotal,
-        finalCustomerId,
-        quotationNotes
-      );
+      let quotationNumber = '';
+      if (editingQuotationId) {
+        quotationNumber = await updateQuotation(
+          editingQuotationId,
+          cart,
+          subtotal,
+          tax,
+          discountAmount,
+          grandTotal,
+          finalCustomerId,
+          quotationNotes,
+          billDate
+        );
+        alert('Quotation updated successfully!');
+      } else {
+        quotationNumber = await createQuotation(
+          cart,
+          subtotal,
+          tax,
+          discountAmount,
+          grandTotal,
+          finalCustomerId,
+          quotationNotes,
+          billDate
+        );
+      }
       
       const currentCustomerObj = finalCustomerId ? customers.find(c => c.id === finalCustomerId) : null;
       const currentCustomer = currentCustomerObj ? currentCustomerObj.name : 'Walk-in Customer';
@@ -494,7 +871,7 @@ export default function POS() {
         invoiceNumber: quotationNumber,
         isQuotation: true,
         quotationNumber: quotationNumber,
-        date: new Date().toLocaleDateString('en-IN'),
+        date: new Date(billDate + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
         customerName: currentCustomer,
         customerDetails: currentCustomerObj ? {
           name: currentCustomerObj.name,
@@ -513,6 +890,7 @@ export default function POS() {
         paidAmount: 0
       };
 
+      (window as any).__isEditingActive = false;
       setPrintData(quotePayload);
       setCompletedSaleModal(quotePayload);
 
@@ -521,6 +899,9 @@ export default function POS() {
       setDiscountType('percentage');
       setCustomerId('');
       setQuotationNotes('');
+      setEditingQuotationId(null);
+      setEditingQuotationNumber(null);
+      setBillDate(getLocalDate());
       setPosMode('billing');
       await refreshQuotations();
       await refreshNextNumbers();
@@ -529,6 +910,53 @@ export default function POS() {
       alert(`Error saving quotation: ${error}`);
     } finally {
       setIsProcessing(false);
+    }
+  }
+
+  // Handle Editing an Existing Quotation
+  async function handleEditQuotation(qId: number) {
+    try {
+      const fullQ = await getQuotationById(qId);
+      if (!fullQ) return;
+      
+      if (fullQ.customer_id) {
+        setCustomerId(fullQ.customer_id);
+      } else {
+        setCustomerId('');
+      }
+
+      if (fullQ.date) {
+        setBillDate(fullQ.date.split(' ')[0]);
+      }
+
+      if (fullQ.items) {
+        setCart(fullQ.items.map((i: any) => ({
+          id: i.product_id,
+          name: i.name,
+          model: i.model,
+          selling_price: i.unit_price,
+          cart_qty: i.quantity,
+          unit: i.unit,
+          hsn_code: i.hsn_code,
+          cgst_percentage: i.cgst_percentage,
+          sgst_percentage: i.sgst_percentage,
+          gst_percentage: i.gst_percentage,
+          stock_quantity: i.stock_quantity
+        } as CartItem)));
+      }
+
+      setDiscountType('amount');
+      setDiscount(fullQ.discount);
+      setQuotationNotes(fullQ.notes || '');
+      setEditingQuotationId(fullQ.id);
+      setEditingQuotationNumber(fullQ.quotation_number);
+      setConvertingQuotationId(null);
+      setConvertingQuotationNumber(null);
+      setPosMode('quotation');
+      setIsQuotationsModalOpen(false);
+    } catch (e) {
+      console.error("Failed to load quotation for editing:", e);
+      alert("Error loading quotation details: " + e);
     }
   }
 
@@ -563,6 +991,8 @@ export default function POS() {
       setDiscountType('amount');
       setDiscount(fullQ.discount);
       setPaidAmount(0);
+      setEditingQuotationId(null);
+      setEditingQuotationNumber(null);
       setConvertingQuotationId(fullQ.id);
       setConvertingQuotationNumber(fullQ.quotation_number);
       setPosMode('billing');
@@ -725,13 +1155,19 @@ export default function POS() {
               <button
                 type="button"
                 onClick={() => {
+                  if (editingQuotationId) {
+                    alert("Currently editing quotation. Press 'Esc' or click (X) on the edit banner to exit edit mode.");
+                    return;
+                  }
                   setPosMode('billing');
                 }}
+                disabled={!!editingQuotationId}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all ${
                   posMode === 'billing'
                     ? 'bg-canvas text-ink shadow-xs'
                     : 'text-muted hover:text-ink'
-                }`}
+                } ${editingQuotationId ? 'opacity-40 cursor-not-allowed' : ''}`}
+                title={editingQuotationId ? "Currently editing quotation. Press Esc or (X) to exit." : "Sale Bill"}
               >
                 <ShoppingCart className="w-3.5 h-3.5 text-primary" />
                 <span>Sale Bill</span>
@@ -740,15 +1176,21 @@ export default function POS() {
               <button
                 type="button"
                 onClick={() => {
+                  if (activeSaleId) {
+                    alert("Currently viewing or editing a bill. Press 'Esc' or click Close to exit.");
+                    return;
+                  }
                   setPosMode('quotation');
                   setConvertingQuotationId(null);
                   setConvertingQuotationNumber(null);
                 }}
+                disabled={!!activeSaleId}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all ${
                   posMode === 'quotation'
                     ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 shadow-xs border border-amber-500/30'
                     : 'text-muted hover:text-ink'
-                }`}
+                } ${activeSaleId ? 'opacity-40 cursor-not-allowed' : ''}`}
+                title={activeSaleId ? "Currently viewing or editing a bill. Press Esc or Close to exit." : "Quotation"}
               >
                 <FileText className="w-3.5 h-3.5 text-amber-500" />
                 <span>Quotation</span>
@@ -756,17 +1198,68 @@ export default function POS() {
             </div>
 
             {/* Live Bill/Quote Number and Date */}
-            <div className="flex items-center gap-2.5 text-xs">
-              <span className="font-mono font-bold text-ink bg-surface-soft px-2.5 py-1 rounded-md border border-hairline">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="font-bold text-ink bg-surface-soft px-2.5 py-1 rounded-md border border-hairline">
                 {posMode === 'billing' 
-                  ? (editSaleId ? `Bill #${editSaleId}` : `Bill: ${nextInvoiceNo || '...'}`)
-                  : `Quote: ${nextQuotationNo || '...'}`}
+                  ? (activeSaleId ? (editingInvoiceNumber ? `Bill: ${editingInvoiceNumber}` : `Bill #${activeSaleId}`) : `Bill: ${nextInvoiceNo || '...'}`)
+                  : (editingQuotationNumber ? `Quote: ${editingQuotationNumber}` : `Quote: ${nextQuotationNo || '...'}`)}
               </span>
-              <span className="text-muted flex items-center gap-1 font-medium">
-                <span>•</span>
-                <span>{new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-              </span>
+              <div className="flex items-center gap-1.5 bg-surface-soft px-2 py-0.5 rounded-md border border-hairline" title="Bill Date (Click to change date)">
+                <Calendar className="w-3.5 h-3.5 text-muted shrink-0" />
+                <input
+                  type="date"
+                  value={billDate}
+                  disabled={isViewOnly}
+                  onChange={(e) => setBillDate(e.target.value)}
+                  className={`bg-transparent text-xs font-semibold text-ink focus:outline-none ${isViewOnly ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
+                />
+                {!isViewOnly && billDate !== getLocalDate() && (
+                  <button
+                    type="button"
+                    onClick={() => setBillDate(getLocalDate())}
+                    className="text-[10px] text-primary hover:underline font-bold ml-0.5"
+                    title="Reset to today"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Viewing Bill Notice Pill (Read-Only) */}
+            {isViewOnly && (
+              <div className="flex items-center gap-1.5 text-xs bg-primary/10 text-primary border border-primary/25 px-2.5 py-1 rounded-md font-semibold">
+                <Eye className="w-3.5 h-3.5 shrink-0" />
+                <span>Viewing {editingInvoiceNumber ? `Bill: ${editingInvoiceNumber}` : `Bill #${activeSaleId}`}</span>
+                <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.2 rounded font-medium">Read-Only</span>
+                <button
+                  type="button"
+                  onClick={handleCancelEditBill}
+                  className="ml-2 px-2 py-0.5 text-xs font-semibold bg-canvas text-primary hover:bg-primary hover:text-on-primary rounded border border-primary/30 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  title={location.state?.from === 'contacts' ? "Close view and return to Customer Profile (Esc)" : "Close view and return to Day Book (Esc)"}
+                >
+                  <span>Close</span>
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            {/* Editing Bill Notice Pill */}
+            {editSaleId && (
+              <div className="flex items-center gap-1.5 text-xs bg-primary/10 text-primary border border-primary/25 px-2.5 py-1 rounded-md font-semibold">
+                <Edit className="w-3.5 h-3.5 shrink-0" />
+                <span>Editing {editingInvoiceNumber ? `Bill: ${editingInvoiceNumber}` : `Bill #${editSaleId}`}</span>
+                <button
+                  type="button"
+                  onClick={handleCancelEditBill}
+                  className="ml-2 px-2 py-0.5 text-xs font-semibold bg-canvas text-primary hover:bg-primary hover:text-on-primary rounded border border-primary/30 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  title={location.state?.from === 'contacts' ? "Cancel editing bill and return to Customer Profile (Esc)" : "Cancel editing bill and return to Day Book (Esc)"}
+                >
+                  <span>Cancel</span>
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
 
             {/* Converting Quotation Notice Pill */}
             {convertingQuotationNumber && (
@@ -784,71 +1277,42 @@ export default function POS() {
               </div>
             )}
 
-            {/* Stock Source Selector (Shop vs Godown) */}
-            {posMode === 'billing' && (
-              <div className="flex items-center gap-1.5 ml-1 pl-3 border-l border-hairline">
-                <div className="flex items-center bg-surface-soft p-0.5 rounded-lg border border-hairline">
-                  <button
-                    type="button"
-                    onClick={() => setSourceType('shop')}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all ${
-                      sourceType === 'shop' ? 'bg-ink text-canvas shadow-xs' : 'text-muted hover:text-ink'
-                    }`}
-                    title="Sell from Main Shop stock"
-                  >
-                    <Store className="w-3.5 h-3.5" />
-                    <span>Shop Stock</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSourceType('warehouse');
-                      if (warehouses.length > 0 && sourceWarehouseId === '') {
-                        setSourceWarehouseId(warehouses[0].id);
-                      }
-                    }}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all ${
-                      sourceType === 'warehouse' ? 'bg-ink text-canvas shadow-xs' : 'text-muted hover:text-ink'
-                    }`}
-                    title="Sell from Warehouse / Godown"
-                  >
-                    <Building2 className="w-3.5 h-3.5" />
-                    <span>Godown Stock</span>
-                  </button>
-                </div>
-
-                {sourceType === 'warehouse' && (
-                  <div className="flex items-center">
-                    {warehouses.length > 0 ? (
-                      <select
-                        value={sourceWarehouseId}
-                        onChange={(e) => setSourceWarehouseId(Number(e.target.value))}
-                        className="px-2.5 py-1 text-xs font-semibold bg-canvas text-ink border border-hairline rounded-md focus:outline-none focus:border-ink cursor-pointer shadow-xs"
-                      >
-                        {warehouses.map(wh => (
-                          <option key={wh.id} value={wh.id}>
-                            🏢 {wh.name} {wh.location ? `(${wh.location})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-[11px] text-amber-600 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
-                        No godowns
-                      </span>
-                    )}
-                  </div>
-                )}
+            {/* Editing Quotation Notice Pill */}
+            {editingQuotationNumber && (
+              <div className="flex items-center gap-1.5 text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2.5 py-1 rounded-md font-semibold">
+                <Edit className="w-3.5 h-3.5 shrink-0" />
+                <span>Editing {editingQuotationNumber}</span>
+                <button
+                  type="button"
+                  onClick={handleCancelEditQuotation}
+                  className="ml-2 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300 hover:text-ink hover:bg-amber-500/20 rounded border border-amber-500/30 flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Cancel editing quotation (Esc)"
+                >
+                  <span>Cancel</span>
+                  <X className="w-3 h-3" />
+                </button>
               </div>
             )}
+
           </div>
 
           {/* Right: Quotations List Modal Button */}
           <div className="flex items-center gap-2.5">
             <button
               type="button"
-              onClick={() => { refreshQuotations(); setIsQuotationsModalOpen(true); }}
-              className="px-3.5 py-1.5 text-xs font-semibold bg-surface-soft hover:bg-surface-strong border border-hairline rounded-lg text-ink flex items-center gap-2 transition-colors shadow-xs"
-              title="View and manage saved quotations"
+              onClick={() => {
+                if (editSaleId || editingQuotationId || isViewOnly) {
+                  alert(isViewOnly ? "You are currently viewing a bill. Press 'Esc' or click Close to exit before opening other screens." : "You are currently in edit mode. Press 'Esc' or click Cancel to exit edit mode before opening other screens.");
+                  return;
+                }
+                refreshQuotations();
+                setIsQuotationsModalOpen(true);
+              }}
+              disabled={!!editSaleId || !!editingQuotationId || isViewOnly}
+              className={`px-3.5 py-1.5 text-xs font-semibold bg-surface-soft hover:bg-surface-strong border border-hairline rounded-lg text-ink flex items-center gap-2 transition-colors shadow-xs ${
+                editSaleId || editingQuotationId || isViewOnly ? 'opacity-40 cursor-not-allowed' : ''
+              }`}
+              title={editSaleId || editingQuotationId || isViewOnly ? "Exit view/edit mode first to view quotations" : "View and manage saved quotations"}
             >
               <FileText className="w-3.5 h-3.5 text-primary" />
               <span>Quotations List</span>
@@ -870,23 +1334,36 @@ export default function POS() {
             {/* Customer Selector */}
             <div className="p-4 border-b border-hairline bg-surface-soft shrink-0">
               <div className="relative">
-                <div className="flex items-center gap-3 w-full bg-canvas px-3 py-2 rounded-md border border-hairline focus-within:border-primary transition-colors">
+                <div className="flex items-center gap-2 w-full bg-canvas px-3 py-2 rounded-md border border-hairline focus-within:border-primary transition-colors">
                   <User className="w-4 h-4 text-muted shrink-0" />
                   <input
                     type="text"
+                    disabled={isViewOnly}
                     placeholder="Search Customer (or leave Walk-in)"
-                    className="flex-1 bg-transparent text-sm outline-none text-ink font-medium placeholder:text-muted"
+                    className={`flex-1 bg-transparent text-sm outline-none text-ink font-medium placeholder:text-muted ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
                     value={customerSearch}
                     onChange={(e) => {
+                      if (isViewOnly) return;
                       setCustomerSearch(e.target.value);
                       setIsCustomerDropdownOpen(true);
                       if (e.target.value === '') setCustomerId('');
                     }}
-                    onFocus={() => setIsCustomerDropdownOpen(true)}
+                    onFocus={() => { if (!isViewOnly) setIsCustomerDropdownOpen(true); }}
                   />
-                  {customerId !== '' && (
+                  {customerId !== '' && !isViewOnly && (
                     <button onClick={() => { setCustomerId(''); setCustomerSearch(''); }} className="text-muted hover:text-ink p-0.5">
                       <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {!isViewOnly && (
+                    <button
+                      type="button"
+                      onClick={() => openQuickCustomerModal(customerSearch.trim())}
+                      className="px-2 py-0.5 text-xs font-semibold text-primary hover:bg-primary/10 rounded transition-colors flex items-center gap-1 cursor-pointer shrink-0 border border-primary/20"
+                      title="Add new customer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>New</span>
                     </button>
                   )}
                 </div>
@@ -907,6 +1384,23 @@ export default function POS() {
                           <span>Walk-in Customer</span>
                           <span className="text-xs text-muted">Default</span>
                         </li>
+
+                        {/* Direct Customer Creation Option */}
+                        <li
+                          onClick={() => {
+                            setIsCustomerDropdownOpen(false);
+                            openQuickCustomerModal(customerSearch.trim());
+                          }}
+                          className="p-3 bg-primary/5 hover:bg-primary/10 text-primary cursor-pointer text-sm font-semibold flex items-center gap-2 transition-colors border-b border-hairline"
+                        >
+                          <Plus className="w-4 h-4 shrink-0 text-primary" />
+                          <span>
+                            {customerSearch.trim()
+                              ? `+ Add "${customerSearch.trim()}" as New Customer`
+                              : '+ Add New Customer'}
+                          </span>
+                        </li>
+
                         {filteredCustomers.map(c => (
                           <li 
                             key={c.id}
@@ -919,15 +1413,43 @@ export default function POS() {
                           >
                             <div>
                               <span className="font-medium text-ink">{c.name}</span>
-                              {c.phone && <span className="text-xs text-muted ml-2 font-mono">{c.phone}</span>}
+                              {c.phone && <span className="text-xs text-muted ml-2">{c.phone}</span>}
                             </div>
-                            {c.balance > 0 && <span className="text-xs text-signature-coral font-medium">Owes: ₹{c.balance.toFixed(0)}</span>}
+                            <div className="flex items-center gap-1.5">
+                              {c.balance > 0 && <span className="text-xs text-signature-coral font-medium">Owes: ₹{c.balance.toFixed(0)}</span>}
+                              {(c.advance_balance || 0) > 0 ? (
+                                <span className="text-xs text-emerald-600 font-semibold">Adv: ₹{(c.advance_balance || 0).toFixed(0)}</span>
+                              ) : c.balance < 0 ? (
+                                <span className="text-xs text-emerald-600 font-semibold">Adv: ₹{Math.abs(c.balance).toFixed(0)}</span>
+                              ) : null}
+                            </div>
                           </li>
                         ))}
                       </ul>
                     </div>
                   </>
                 )}
+                {customerId !== '' && (() => {
+                  const sel = customers.find(c => c.id === customerId);
+                  if (!sel) return null;
+                  return (
+                    <div className="flex items-center justify-between text-xs pt-2 px-1">
+                      <span className="text-muted font-medium">Customer Account:</span>
+                      <div className="flex items-center gap-2">
+                        {sel.balance > 0 && (
+                          <span className="text-signature-coral font-bold">Owes: ₹{sel.balance.toFixed(2)}</span>
+                        )}
+                        {(sel.advance_balance || 0) > 0 ? (
+                          <span className="text-emerald-600 font-bold">Adv: ₹{(sel.advance_balance || 0).toFixed(2)}</span>
+                        ) : sel.balance < 0 ? (
+                          <span className="text-emerald-600 font-bold">Adv: ₹{Math.abs(sel.balance).toFixed(2)}</span>
+                        ) : sel.balance <= 0 ? (
+                          <span className="text-muted font-medium">Settled (₹0.00)</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -948,63 +1470,128 @@ export default function POS() {
                   </p>
                 </div>
               ) : (
-                cart.map((item) => (
-                  <div key={item.id} className="bg-canvas border-b border-hairline py-3 px-5 group flex items-center justify-between gap-3 hover:bg-surface-soft/40 transition-colors">
-                    <div className="flex-1 min-w-0 pr-2">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-medium text-ink truncate leading-tight">{item.name}</h3>
-                        {item.model && <span className="text-xs text-muted truncate">({item.model})</span>}
-                      </div>
-                      <div className="text-xs text-muted mt-1.5 flex items-center gap-2 flex-wrap">
-                        <div className="flex items-center">
-                          <span className="text-muted mr-0.5">₹</span>
-                          <input
-                            type="number"
-                            value={item.selling_price === 0 ? '' : item.selling_price}
-                            onChange={(e) => updateRate(item.id, Number(e.target.value) || 0)}
-                            className="w-16 bg-transparent border-b border-hairline hover:border-ink focus:border-primary outline-none text-ink font-semibold text-xs text-right transition-colors"
-                            title="Selling Rate"
-                          />
-                          <span className="ml-1 text-muted">/ {item.unit || 'pc'}</span>
+                cart.map((item) => {
+                  const cartKey = getItemCartKey(item);
+                  const isWarehouse = item.item_source_type === 'warehouse';
+
+                  return (
+                    <div key={cartKey} className="bg-canvas border-b border-hairline py-3 px-5 group flex items-center justify-between gap-3 hover:bg-surface-soft/40 transition-colors">
+                      <div className="flex-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-medium text-ink truncate leading-tight">{item.name}</h3>
+                          {item.model && <span className="text-xs text-muted truncate">({item.model})</span>}
                         </div>
-                        {enableSalesGST && <span className="text-primary text-[10px]">({item.cgst_percentage || 0}% CGST, {item.sgst_percentage || 0}% SGST)</span>}
-                        {/* Live Stock Count */}
-                        <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-surface-soft text-muted border border-hairline flex items-center gap-1" title={`Available stock in ${sourceType === 'warehouse' ? (warehouses.find(w => w.id === sourceWarehouseId)?.name || 'Godown') : 'Main Shop'}`}>
-                          {sourceType === 'warehouse' ? <Building2 className="w-3 h-3 shrink-0 text-muted" /> : <Store className="w-3 h-3 shrink-0 text-muted" />}
-                          <span>Stock: <strong className="text-ink font-semibold">{item.stock_quantity}</strong> {item.unit || 'pc'}</span>
-                        </span>
-                        {item.cart_qty >= item.stock_quantity && item.stock_quantity > 0 && (
-                          <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                            Max stock reached
+                        <div className="text-xs text-muted mt-1.5 flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center">
+                            <span className="text-muted mr-0.5">₹</span>
+                            <input
+                              type="number"
+                              disabled={isViewOnly}
+                              value={item.selling_price === 0 ? '' : item.selling_price}
+                              onChange={(e) => updateRate(cartKey, Number(e.target.value) || 0)}
+                              className={`w-16 bg-transparent border-b border-hairline hover:border-ink focus:border-primary outline-none text-ink font-semibold text-xs text-right transition-colors ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
+                              title="Selling Rate"
+                            />
+                            <span className="ml-1 text-muted">/ {item.unit || 'pc'}</span>
+                          </div>
+                          {enableSalesGST && <span className="text-primary text-[10px]">({item.cgst_percentage || 0}% CGST, {item.sgst_percentage || 0}% SGST)</span>}
+
+                          {/* Item Stock Source Selector (Shop or Warehouse) */}
+                          {isViewOnly ? (
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 border ${
+                              isWarehouse 
+                                ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/35' 
+                                : 'bg-primary/10 text-primary border-primary/25'
+                            }`}>
+                              {isWarehouse ? <Building2 className="w-3 h-3 shrink-0" /> : <Store className="w-3 h-3 shrink-0" />}
+                              <span>{item.item_warehouse_name || (isWarehouse ? 'Godown' : 'Main Shop')}</span>
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={isWarehouse ? `wh_${item.item_warehouse_id}` : 'shop'}
+                                onChange={(e) => handleChangeItemSource(item, e.target.value)}
+                                className={`text-[11px] font-semibold px-2 py-0.5 rounded border focus:outline-none cursor-pointer transition-colors shadow-2xs ${
+                                  isWarehouse 
+                                    ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/35' 
+                                    : 'bg-primary/10 text-primary border-primary/30'
+                                }`}
+                                title="Change stock location for this product"
+                              >
+                                <option value="shop">🏪 Main Shop ({item.shop_stock ?? 0} in stock)</option>
+                                {warehouses.map(wh => (
+                                  <option key={wh.id} value={`wh_${wh.id}`}>
+                                    🏢 {wh.name} ({item.warehouse_stocks?.[wh.id] ?? 0} in stock)
+                                  </option>
+                                ))}
+                              </select>
+
+                              {/* Quick button to add another line of this item from Godown */}
+                              {warehouses.length > 0 && !isWarehouse && (
+                                warehouses.some(wh => (item.warehouse_stocks?.[wh.id] || 0) > 0) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const availWh = warehouses.find(wh => (item.warehouse_stocks?.[wh.id] || 0) > 0) || warehouses[0];
+                                      handleAddFromGodown(item, availWh.id);
+                                    }}
+                                    className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-1.5 py-0.5 rounded border border-blue-500/30 flex items-center gap-0.5 transition-colors cursor-pointer"
+                                    title="Add another line of this item from Godown"
+                                  >
+                                    <Building2 className="w-2.5 h-2.5" />
+                                    <span>+ Godown</span>
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          )}
+
+                          {/* Live Available Stock Badge */}
+                          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-surface-soft text-muted border border-hairline flex items-center gap-1">
+                            <span>Avail: <strong className="text-ink font-semibold">{item.stock_quantity}</strong> {item.unit || 'pc'}</span>
                           </span>
+
+                          {item.cart_qty >= item.stock_quantity && item.stock_quantity > 0 && (
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                              Max stock reached
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 shrink-0">
+                        {isViewOnly ? (
+                          <div className="px-2.5 py-1 bg-surface-soft border border-hairline rounded-md text-xs font-bold text-ink">
+                            Qty: {item.cart_qty}
+                          </div>
+                        ) : (
+                          <div className="flex items-center bg-surface-soft border border-hairline rounded-md p-0.5">
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.cart_qty === 0 ? '' : item.cart_qty}
+                              onChange={(e) => setQty(cartKey, Number(e.target.value) || 0)}
+                              onBlur={() => { if (item.cart_qty < 1) setQty(cartKey, 1); }}
+                              className="w-12 text-center text-sm font-bold text-ink bg-transparent focus:outline-none"
+                            />
+                          </div>
+                        )}
+                        <div className="w-[70px] text-right">
+                          <span className="font-bold text-ink text-sm tabular-nums">₹{(item.selling_price * item.cart_qty).toFixed(2)}</span>
+                        </div>
+                        {!isViewOnly && (
+                          <button 
+                            onClick={() => removeFromCart(cartKey)}
+                            className="text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-surface-strong cursor-pointer"
+                            title="Remove item"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         )}
                       </div>
                     </div>
-                    
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="flex items-center bg-surface-soft border border-hairline rounded-md p-0.5">
-                        <input
-                          type="number"
-                          min="1"
-                          value={item.cart_qty === 0 ? '' : item.cart_qty}
-                          onChange={(e) => setQty(item.id, Number(e.target.value) || 0)}
-                          onBlur={() => { if (item.cart_qty < 1) setQty(item.id, 1); }}
-                          className="w-12 text-center text-sm font-bold text-ink bg-transparent focus:outline-none"
-                        />
-                      </div>
-                      <div className="w-[70px] text-right">
-                        <span className="font-bold text-ink text-sm font-mono">₹{(item.selling_price * item.cart_qty).toFixed(2)}</span>
-                      </div>
-                      <button 
-                        onClick={() => removeFromCart(item.id)}
-                        className="text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-surface-strong"
-                        title="Remove item"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -1032,12 +1619,12 @@ export default function POS() {
                 {enableSalesGST && salesTaxMethod === 'inclusive' ? (
                   <div className="flex justify-between text-sm text-body">
                     <span>Original Price (GST Inc)</span>
-                    <span className="font-medium text-ink font-mono">₹{subtotal.toFixed(2)}</span>
+                    <span className="font-medium text-ink tabular-nums">₹{subtotal.toFixed(2)}</span>
                   </div>
                 ) : (
                   <div className="flex justify-between text-sm text-body">
                     <span>Original Price (GST Exc)</span>
-                    <span className="font-medium text-ink font-mono">₹{subtotal.toFixed(2)}</span>
+                    <span className="font-medium text-ink tabular-nums">₹{subtotal.toFixed(2)}</span>
                   </div>
                 )}
                 
@@ -1045,8 +1632,10 @@ export default function POS() {
                   <span>Discount</span>
                   <div className="flex items-center gap-1.5">
                     <button 
+                      type="button"
+                      disabled={isViewOnly}
                       onClick={() => setDiscountType(prev => prev === 'amount' ? 'percentage' : 'amount')}
-                      className="text-xs font-semibold bg-canvas border border-hairline text-ink hover:bg-surface-strong px-2 py-0.5 rounded transition-colors select-none"
+                      className={`text-xs font-semibold bg-canvas border border-hairline text-ink hover:bg-surface-strong px-2 py-0.5 rounded transition-colors select-none ${isViewOnly ? 'cursor-not-allowed opacity-60' : ''}`}
                       title="Toggle discount type"
                     >
                       {discountType === 'amount' ? '₹' : '%'}
@@ -1054,16 +1643,18 @@ export default function POS() {
                     <input 
                       type="number" 
                       min="0"
+                      disabled={isViewOnly}
                       max={discountType === 'percentage' ? 100 : undefined}
                       value={discount === 0 ? '' : discount}
                       onChange={(e) => {
+                        if (isViewOnly) return;
                         let val = Number(e.target.value) || 0;
                         if (val < 0) val = 0;
                         if (discountType === 'percentage' && val > 100) val = 100;
                         setDiscount(val);
                       }}
                       placeholder="0"
-                      className="w-16 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-primary font-semibold text-ink transition-colors font-mono"
+                      className={`w-16 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-primary font-semibold text-ink transition-colors tabular-nums ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
                     />
                   </div>
                 </div>
@@ -1071,13 +1662,13 @@ export default function POS() {
                 {discountAmount > 0 && (
                   <div className="flex justify-between text-sm text-success font-medium">
                     <span>Discount Amount</span>
-                    <span className="font-mono">-₹{discountAmount.toFixed(2)}</span>
+                    <span className="tabular-nums">-₹{discountAmount.toFixed(2)}</span>
                   </div>
                 )}
                 
                 <div className="flex justify-between text-sm text-body mt-2 pt-2 border-t border-hairline">
                   <span className="font-medium">Taxable Value</span>
-                  <span className="font-medium text-ink font-mono">₹{taxableValueSum.toFixed(2)}</span>
+                  <span className="font-medium text-ink tabular-nums">₹{taxableValueSum.toFixed(2)}</span>
                 </div>
 
                 {enableSalesGST && (
@@ -1085,13 +1676,13 @@ export default function POS() {
                     {Object.entries(taxBreakdown.cgst).map(([pct, amt]) => (
                       <div key={`cgst-${pct}`} className="flex justify-between items-center text-xs text-body">
                         <span>CGST ({pct}%)</span>
-                        <span className="font-medium text-ink font-mono">₹{amt.toFixed(2)}</span>
+                        <span className="font-medium text-ink tabular-nums">₹{amt.toFixed(2)}</span>
                       </div>
                     ))}
                     {Object.entries(taxBreakdown.sgst).map(([pct, amt]) => (
                       <div key={`sgst-${pct}`} className="flex justify-between items-center text-xs text-body">
                         <span>SGST ({pct}%)</span>
-                        <span className="font-medium text-ink font-mono">₹{amt.toFixed(2)}</span>
+                        <span className="font-medium text-ink tabular-nums">₹{amt.toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
@@ -1100,13 +1691,13 @@ export default function POS() {
                 {roundOff !== 0 && (
                   <div className="flex justify-between items-center text-xs text-body">
                     <span>Round off</span>
-                    <span className="font-medium text-ink font-mono">{roundOff > 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
+                    <span className="font-medium text-ink tabular-nums">{roundOff > 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
                   </div>
                 )}
                 
                 <div className="flex justify-between items-end border-t border-hairline pt-3 mt-4">
                   <span className="text-ink font-semibold">Grand Total</span>
-                  <span className="text-2xl font-display font-bold text-ink tracking-tight leading-none font-mono">₹{grandTotal.toFixed(2)}</span>
+                  <span className="text-2xl font-display font-bold text-ink tracking-tight leading-none tabular-nums">₹{grandTotal.toFixed(2)}</span>
                 </div>
                 
                 {posMode === 'billing' ? (
@@ -1118,15 +1709,17 @@ export default function POS() {
                         <input 
                           type="number" 
                           min="0"
+                          disabled={isViewOnly}
                           max={grandTotal}
                           value={paidAmount === '' ? '' : paidAmount}
                           onChange={(e) => {
+                            if (isViewOnly) return;
                             let val: number | string = e.target.value === '' ? '' : Number(e.target.value);
                             if (typeof val === 'number' && val > grandTotal) val = Number(grandTotal.toFixed(2));
                             setPaidAmount(val as number | '');
                           }}
                           placeholder={grandTotal > 0 ? grandTotal.toFixed(2) : '0'}
-                          className="w-20 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-primary font-bold text-ink transition-colors font-mono"
+                          className={`w-20 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-primary font-bold text-ink transition-colors tabular-nums ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
                         />
                       </div>
                     </div>
@@ -1143,8 +1736,15 @@ export default function POS() {
                             <button
                               key={mode}
                               type="button"
-                              onClick={() => setPaymentMethod(mode)}
-                              className={`py-1.5 px-1 text-[11px] font-medium rounded border transition-colors text-center ${paymentMethod === mode ? 'bg-primary text-on-primary border-primary font-semibold shadow-2xs' : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'}`}
+                              disabled={isViewOnly}
+                              onClick={() => { if (!isViewOnly) setPaymentMethod(mode); }}
+                              className={`py-1.5 px-1 text-[11px] font-medium rounded border transition-colors text-center ${
+                                paymentMethod === mode 
+                                  ? 'bg-primary text-on-primary border-primary font-semibold shadow-2xs' 
+                                  : isViewOnly 
+                                    ? 'bg-canvas text-muted/50 border-hairline/50 cursor-not-allowed' 
+                                    : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'
+                              }`}
                             >
                               {mode}
                             </button>
@@ -1167,7 +1767,7 @@ export default function POS() {
                                   placeholder="004128"
                                   value={posChequeNo}
                                   onChange={e => setPosChequeNo(e.target.value)}
-                                  className="w-full px-2 py-1 bg-canvas border border-hairline rounded text-xs text-ink focus:outline-none focus:border-primary font-mono"
+                                  className="w-full px-2 py-1 bg-canvas border border-hairline rounded text-xs text-ink focus:outline-none focus:border-primary"
                                 />
                               </div>
                               <div>
@@ -1216,16 +1816,80 @@ export default function POS() {
                     )}
 
                     {isCreditPending && (
-                      <div className="flex justify-between items-center text-xs text-signature-coral font-semibold pt-1">
-                        <span>Pending Balance</span>
-                        <span className="font-mono">₹{pendingBalance.toFixed(2)}</span>
+                      <div className="space-y-1 pt-1">
+                        <div className="flex justify-between items-center text-xs text-signature-coral font-semibold">
+                          <span>Pending Balance (Due on Bill)</span>
+                          <span className="tabular-nums">₹{pendingBalance.toFixed(2)}</span>
+                        </div>
+                        {customerId === '' && (
+                          <div className="text-[11px] text-signature-coral font-medium text-right">
+                            *Select a customer to record credit
+                          </div>
+                        )}
                       </div>
                     )}
-                    {isCreditPending && customerId === '' && (
-                      <div className="text-[11px] text-signature-coral font-medium mt-1 text-right">
-                        *Select a customer to record credit
-                      </div>
-                    )}
+
+                    {/* Dispatch & Transport Details Section */}
+                    <div className="pt-2.5 border-t border-hairline/70 mt-2 space-y-1.5">
+                      {grandTotal >= 100000 ? (
+                        <div className={`p-2.5 rounded-lg border flex flex-col gap-1.5 transition-all ${
+                          hasDispatchDetails 
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-ink' 
+                            : 'bg-amber-500/15 border-amber-500/50 text-amber-950 dark:text-amber-100 shadow-2xs'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-xs font-bold">
+                              <Truck className={`w-3.5 h-3.5 ${hasDispatchDetails ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`} />
+                              <span>Dispatch & e-Way Bill</span>
+                            </div>
+                            {hasDispatchDetails ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/40">
+                                Required: ✓ Added
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-600 text-white font-bold animate-pulse">
+                                Required (≥ ₹1L)
+                              </span>
+                            )}
+                          </div>
+
+                          {hasDispatchDetails && (
+                            <div className="text-[11px] text-muted space-y-0.5 leading-tight py-0.5 border-y border-hairline/40">
+                              {dispatchDetails.ewayBillNo && <div><span className="font-medium text-ink">e-Way:</span> {dispatchDetails.ewayBillNo}</div>}
+                              {dispatchDetails.motorVehicleNo && <div><span className="font-medium text-ink">Vehicle:</span> {dispatchDetails.motorVehicleNo}</div>}
+                              {dispatchDetails.destination && <div><span className="font-medium text-ink">Dest:</span> {dispatchDetails.destination}</div>}
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setShowDispatchModal(true)}
+                            className={`w-full py-1.5 px-2 text-xs font-semibold rounded-md transition-all text-center flex items-center justify-center gap-1.5 ${
+                              hasDispatchDetails
+                                ? 'bg-canvas text-ink border border-hairline hover:bg-surface-soft'
+                                : 'bg-amber-600 hover:bg-amber-700 text-white shadow-xs active:scale-[0.99]'
+                            }`}
+                          >
+                            <Truck className="w-3.5 h-3.5" />
+                            <span>{hasDispatchDetails ? 'Edit Dispatch Details' : '+ Enter Required Dispatch Details'}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between text-xs py-0.5">
+                          <div className="flex items-center gap-1.5 text-muted">
+                            <Truck className="w-3.5 h-3.5" />
+                            <span>Dispatch / Transport</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowDispatchModal(true)}
+                            className="text-[11px] font-medium text-primary hover:underline hover:text-primary-active py-0.5 px-1.5 rounded hover:bg-primary/5 transition-colors"
+                          >
+                            {hasDispatchDetails ? '✓ Edit Details' : '+ Add Transport Details'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <div className="pt-3 border-t border-hairline mt-3">
@@ -1244,54 +1908,176 @@ export default function POS() {
 
             {/* Checkout / Save Buttons */}
             <div className="p-4 bg-canvas border-t border-hairline flex flex-col gap-2 shrink-0">
-              {posMode === 'billing' ? (
-                <button 
-                  type="button"
-                  onClick={handleCheckout}
-                  disabled={cart.length === 0 || isProcessing || (!editSaleId && isCreditPending && customerId === '')}
-                  className={`w-full font-semibold py-3 rounded-lg flex justify-center items-center text-sm transition-all shadow-sm ${
-                    (cart.length === 0 || isProcessing || (!editSaleId && isCreditPending && customerId === '')) 
-                      ? 'bg-surface-strong text-muted cursor-not-allowed' 
-                      : 'bg-primary hover:bg-primary-active text-on-primary active:scale-[0.99]'
-                  }`}
-                  title="Press Ctrl+S to complete sale"
-                >
-                  <IndianRupee className="w-4 h-4 mr-2" /> 
-                  {isProcessing ? 'Processing...' : editSaleId ? 'Update Sale (Ctrl+S)' : convertingQuotationId ? 'Complete Sale & Convert (Ctrl+S)' : 'Complete Sale (Ctrl+S)'}
-                </button>
+              {isViewOnly ? (
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeSaleId) {
+                        getSaleById(activeSaleId).then(s => {
+                          if (s) {
+                            const whObj = s.source_type === 'warehouse' ? warehouses.find(w => w.id === s.source_warehouse_id) : null;
+                            const customerObj = s.customer_id ? customers.find(c => c.id === s.customer_id) : null;
+                            const receiptPayload: ReceiptData = {
+                              invoiceNumber: s.invoice_number || `Bill #${s.id}`,
+                              isQuotation: false,
+                              date: s.date ? new Date(s.date.split(' ')[0] + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+                              customerName: customerObj ? customerObj.name : (s.customer_name || 'Walk-in Customer'),
+                              customerDetails: customerObj ? {
+                                name: customerObj.name,
+                                phone: customerObj.phone || undefined,
+                                email: customerObj.email || undefined,
+                                address: customerObj.address || undefined,
+                                gstin: customerObj.gstin ? customerObj.gstin.toUpperCase() : undefined
+                              } : undefined,
+                              items: s.items.map((i: any) => ({
+                                id: i.product_id,
+                                name: i.name,
+                                model: i.model,
+                                selling_price: i.unit_price,
+                                cart_qty: i.quantity,
+                                unit: i.unit,
+                                hsn_code: i.hsn_code,
+                                cgst_percentage: i.cgst_percentage,
+                                sgst_percentage: i.sgst_percentage,
+                                gst_percentage: i.gst_percentage,
+                                stock_quantity: i.stock_quantity || 0,
+                                purchase_price: 0,
+                                mrp: 0,
+                                min_stock: 0,
+                                parent_id: null,
+                                is_group: false,
+                                barcode: '',
+                                cart_key: `${i.product_id}_shop_0`
+                              })),
+                              subtotal,
+                              taxAmount: tax,
+                              taxBreakdown,
+                              taxMethod: enableSalesGST ? salesTaxMethod : undefined,
+                              discount: discountAmount,
+                              netAmount: grandTotal,
+                              paidAmount: effectivePaidAmount,
+                              paymentMethod: s.payment_method || 'Cash',
+                              sourceLocationName: s.source_type === 'warehouse' ? (whObj ? whObj.name : 'Warehouse') : 'Main Shop',
+                              dispatchDetails: s.dispatchDetails || (s.dispatch_details ? (typeof s.dispatch_details === 'string' ? JSON.parse(s.dispatch_details) : s.dispatch_details) : undefined)
+                            };
+                            setPrintData(receiptPayload);
+                            setTimeout(() => window.print(), 100);
+                          }
+                        });
+                      }
+                    }}
+                    className="w-full font-semibold py-2.5 rounded-lg transition-colors text-xs bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Invoice</span>
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={handleCancelEditBill}
+                    className="w-full font-semibold py-2.5 rounded-lg transition-colors text-xs bg-surface-strong hover:bg-surface-soft text-ink flex items-center justify-center gap-2 border border-hairline shadow-sm cursor-pointer"
+                    title={location.state?.from === 'contacts' ? "Close bill view and return to Customer Profile (Esc)" : "Close bill view and return to Day Book (Esc)"}
+                  >
+                    <X className="w-4 h-4" />
+                    <span>
+                      {location.state?.from === 'contacts' ? 'Close View & Exit to Customer Profile (Esc)' : 'Close View & Exit to Day Book (Esc)'}
+                    </span>
+                  </button>
+                </div>
               ) : (
-                <button 
-                  type="button"
-                  onClick={handleSaveQuotation}
-                  disabled={cart.length === 0 || isProcessing}
-                  className={`w-full font-semibold py-3 rounded-lg flex justify-center items-center text-sm transition-all shadow-sm ${
-                    (cart.length === 0 || isProcessing) 
-                      ? 'bg-surface-strong text-muted cursor-not-allowed' 
-                      : 'bg-amber-600 hover:bg-amber-700 text-white active:scale-[0.99]'
-                  }`}
-                  title="Press Ctrl+S to save quotation"
-                >
-                  <Printer className="w-4 h-4 mr-2" /> 
-                  {isProcessing ? 'Saving Quotation...' : 'Save & Print Quotation (Ctrl+S)'}
-                </button>
-              )}
+                <>
+                  {posMode === 'billing' ? (
+                    <button 
+                      type="button"
+                      onClick={handleCheckout}
+                      disabled={cart.length === 0 || isProcessing || (!editSaleId && isCreditPending && customerId === '')}
+                      className={`w-full font-semibold py-3 rounded-lg flex justify-center items-center text-sm transition-all shadow-sm ${
+                        (cart.length === 0 || isProcessing || (!editSaleId && isCreditPending && customerId === '')) 
+                          ? 'bg-surface-strong text-muted cursor-not-allowed' 
+                          : 'bg-primary hover:bg-primary-active text-on-primary active:scale-[0.99]'
+                      }`}
+                      title="Press Ctrl+S to complete sale"
+                    >
+                      <IndianRupee className="w-4 h-4 mr-2" /> 
+                      {isProcessing ? 'Processing...' : editSaleId ? 'Update Sale (Ctrl+S)' : convertingQuotationId ? 'Complete Sale & Convert (Ctrl+S)' : 'Complete Sale (Ctrl+S)'}
+                    </button>
+                  ) : (
+                    <button 
+                      type="button"
+                      onClick={handleSaveQuotation}
+                      disabled={cart.length === 0 || isProcessing}
+                      className={`w-full font-semibold py-3 rounded-lg flex justify-center items-center text-sm transition-all shadow-sm ${
+                        (cart.length === 0 || isProcessing) 
+                          ? 'bg-surface-strong text-muted cursor-not-allowed' 
+                          : 'bg-amber-600 hover:bg-amber-700 text-white active:scale-[0.99]'
+                      }`}
+                      title="Press Ctrl+S to save quotation"
+                    >
+                      <Printer className="w-4 h-4 mr-2" /> 
+                      {isProcessing 
+                        ? (editingQuotationId ? 'Updating Quotation...' : 'Saving Quotation...') 
+                        : (editingQuotationId ? 'Update Quotation (Ctrl+S)' : 'Save & Print Quotation (Ctrl+S)')}
+                    </button>
+                  )}
 
-              <button 
-                type="button"
-                onClick={() => {
-                  setCart([]);
-                  setConvertingQuotationId(null);
-                  setConvertingQuotationNumber(null);
-                }}
-                disabled={cart.length === 0}
-                className={`w-full font-medium py-1.5 rounded-lg transition-colors text-xs ${
-                  cart.length === 0 
-                    ? 'bg-transparent text-muted/40 cursor-not-allowed' 
-                    : 'bg-transparent text-muted hover:bg-surface-strong hover:text-danger'
-                }`}
-              >
-                Clear Cart
-              </button>
+                  {/* Dedicated Cancel Edit Buttons */}
+                  {editSaleId && (
+                    <button 
+                      type="button"
+                      onClick={handleCancelEditBill}
+                      className="w-full font-semibold py-2 rounded-lg transition-colors text-xs border border-danger/30 text-danger hover:bg-danger/10 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                      title={location.state?.from === 'contacts' ? "Cancel bill editing and return to Customer Profile (Esc)" : "Cancel bill editing and return to Day Book (Esc)"}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>
+                        {location.state?.from === 'contacts' ? 'Cancel Edit & Exit to Customer Profile (Esc)' : 'Cancel Edit & Exit to Day Book (Esc)'}
+                      </span>
+                    </button>
+                  )}
+
+                  {editingQuotationId && (
+                    <button 
+                      type="button"
+                      onClick={handleCancelEditQuotation}
+                      className="w-full font-semibold py-2 rounded-lg transition-colors text-xs border border-danger/30 text-danger hover:bg-danger/10 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                      title="Cancel quotation editing and return to new bill (Esc)"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Cancel Quotation Edit (Esc)</span>
+                    </button>
+                  )}
+
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setCart([]);
+                      setConvertingQuotationId(null);
+                      setConvertingQuotationNumber(null);
+                      setEditingQuotationId(null);
+                      setEditingQuotationNumber(null);
+                      setBillDate(getLocalDate());
+                      setDispatchDetails({
+                        ewayBillNo: '',
+                        dispatchDocNo: '',
+                        dispatchedThrough: '',
+                        destination: '',
+                        carrierName: '',
+                        billOfLadingNo: '',
+                        motorVehicleNo: '',
+                        termsOfDelivery: ''
+                      });
+                    }}
+                    disabled={cart.length === 0}
+                    className={`w-full font-medium py-1.5 rounded-lg transition-colors text-xs ${
+                      cart.length === 0 
+                        ? 'bg-transparent text-muted/40 cursor-not-allowed' 
+                        : 'bg-transparent text-muted hover:bg-surface-strong hover:text-danger'
+                    }`}
+                  >
+                    Clear Cart
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1300,11 +2086,13 @@ export default function POS() {
             <header className="mb-3 shrink-0">
               <h2 className="text-lg font-display font-medium text-ink tracking-tight">Products</h2>
               <p className="text-xs text-muted mt-0.5">
-                {posMode === 'quotation' 
-                  ? 'Add products to quotation voucher' 
-                  : (sourceType === 'warehouse' 
-                      ? `Stock from: 🏢 ${warehouses.find(w => w.id === sourceWarehouseId)?.name || 'Godown'}`
-                      : 'Stock from: 🏪 Main Shop')}
+                {isViewOnly ? (
+                  <span className="text-primary font-semibold">Bill is in Read-Only View mode</span>
+                ) : (
+                  posMode === 'quotation' 
+                    ? 'Add products to quotation voucher' 
+                    : 'Click product to add (Defaults to Main Shop)'
+                )}
               </p>
             </header>
 
@@ -1345,17 +2133,24 @@ export default function POS() {
               ) : displayProducts.length > 0 ? (
                 <div className="bg-canvas border border-hairline rounded-lg shadow-xs overflow-hidden divide-y divide-hairline">
                   {displayProducts.map((p, index) => {
-                    const inCartItem = cart.find(c => c.id === p.id);
+                    const totalInCart = cart.filter(c => c.id === p.id).reduce((sum, c) => sum + c.cart_qty, 0);
                     const isSelected = index === selectedIndex;
-                    const isOutOfStock = p.stock_quantity <= 0;
+                    const shopStock = p.shop_stock ?? p.stock_quantity ?? 0;
+                    const godownStocks = warehouses.map(wh => ({
+                      id: wh.id,
+                      name: wh.name,
+                      quantity: p.warehouse_stocks?.[wh.id] || 0
+                    })).filter(g => g.quantity > 0);
+                    const totalStock = shopStock + godownStocks.reduce((sum, g) => sum + g.quantity, 0);
+                    const isOutOfStock = totalStock <= 0;
                     
                     return (
                       <div 
                         key={p.id} 
-                        onClick={() => addToCart(p)}
+                        onClick={() => { if (!isViewOnly) addToCart(p); }}
                         onMouseEnter={() => setSelectedIndex(index)}
-                        className={`px-3.5 py-3 cursor-pointer transition-colors flex items-center justify-between gap-3 ${
-                          isSelected ? 'bg-primary/5' : 'hover:bg-surface-soft'
+                        className={`px-3.5 py-3 ${isViewOnly ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'} transition-colors flex items-center justify-between gap-3 ${
+                          isSelected && !isViewOnly ? 'bg-primary/5' : 'hover:bg-surface-soft'
                         }`}
                       >
                         <div className="flex-1 min-w-0">
@@ -1365,19 +2160,28 @@ export default function POS() {
                               <span className="text-xs text-muted truncate">({p.model})</span>
                             )}
                           </div>
-                          <div className="text-xs text-muted mt-0.5 flex items-center gap-2 flex-wrap">
+                          <div className="text-xs text-muted mt-1 flex items-center gap-2 flex-wrap">
                             {isOutOfStock ? (
                               <span className="text-danger font-medium text-xs">Out of stock (0)</span>
                             ) : (
-                              <span>
-                                Stock: <strong className="text-ink font-semibold">{p.stock_quantity}</strong> {p.unit || 'pc'}
-                              </span>
+                              <>
+                                <span className={`px-1.5 py-0.2 rounded font-medium text-[11px] ${
+                                  shopStock > 0 ? 'bg-surface-soft text-ink' : 'bg-red-50 text-red-600'
+                                }`}>
+                                  🏪 Shop: <strong>{shopStock}</strong>
+                                </span>
+                                {godownStocks.map(g => (
+                                  <span key={g.id} className="text-amber-700 dark:text-amber-400 font-medium text-[11px] bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                                    🏢 {g.name}: <strong>{g.quantity}</strong>
+                                  </span>
+                                ))}
+                              </>
                             )}
-                            {inCartItem && (
+                            {totalInCart > 0 && (
                               <>
                                 <span className="text-muted/40">•</span>
                                 <span className="text-[11px] font-semibold text-primary">
-                                  {inCartItem.cart_qty} in cart
+                                  {totalInCart} in cart
                                 </span>
                               </>
                             )}
@@ -1385,7 +2189,7 @@ export default function POS() {
                         </div>
                         
                         <div className="text-right shrink-0">
-                          <div className="font-bold text-ink text-sm font-mono">₹{p.selling_price.toFixed(2)}</div>
+                          <div className="font-bold text-ink text-sm tabular-nums">₹{p.selling_price.toFixed(2)}</div>
                           {p.unit && <div className="text-[10px] text-muted">/ {p.unit}</div>}
                         </div>
                       </div>
@@ -1507,7 +2311,7 @@ export default function POS() {
                     <tbody className="divide-y divide-hairline bg-canvas">
                       {filteredQuotations.map(q => (
                         <tr key={q.id} className="hover:bg-surface-soft/60 transition-colors">
-                          <td className="py-3 px-4 font-mono font-bold text-ink">
+                          <td className="py-3 px-4 font-bold text-ink">
                             {q.quotation_number}
                           </td>
                           <td className="py-3 px-4 text-muted">
@@ -1516,7 +2320,7 @@ export default function POS() {
                           <td className="py-3 px-4 font-medium text-ink">
                             {q.customer_name || 'Walk-in Customer'}
                           </td>
-                          <td className="py-3 px-4 text-right font-semibold text-ink font-mono">
+                          <td className="py-3 px-4 text-right font-semibold text-ink tabular-nums">
                             ₹{q.net_amount.toFixed(2)}
                           </td>
                           <td className="py-3 px-4 text-center">
@@ -1533,15 +2337,26 @@ export default function POS() {
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               {q.status === 'Pending' && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleConvertQuotation(q.id)}
-                                  className="px-2.5 py-1 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded flex items-center gap-1 shadow-xs transition-colors"
-                                  title="Convert to active Sale Bill in POS cart"
-                                >
-                                  <ArrowRight className="w-3.5 h-3.5" />
-                                  <span>Convert to Bill</span>
-                                </button>
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditQuotation(q.id)}
+                                    className="px-2.5 py-1 text-xs font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 rounded flex items-center gap-1 transition-colors"
+                                    title="Edit quotation products, rates, or quantities"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                    <span>Edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleConvertQuotation(q.id)}
+                                    className="px-2.5 py-1 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded flex items-center gap-1 shadow-xs transition-colors"
+                                    title="Convert to active Sale Bill in POS cart"
+                                  >
+                                    <ArrowRight className="w-3.5 h-3.5" />
+                                    <span>Convert to Bill</span>
+                                  </button>
+                                </>
                               )}
                               <button
                                 type="button"
@@ -1616,7 +2431,16 @@ export default function POS() {
                   type="button"
                   onClick={() => {
                     if (editSaleId) {
-                      navigate('/daybook', { state: { activeTab: 'sales' } });
+                      if (location.state?.from === 'contacts' && location.state?.partyId) {
+                        navigate('/contacts', {
+                          state: {
+                            activeTab: location.state.partyType || 'customers',
+                            selectedPartyId: location.state.partyId
+                          }
+                        });
+                      } else {
+                        navigate('/daybook', { state: { activeTab: 'sales' } });
+                      }
                     } else {
                       setCompletedSaleModal(null);
                       setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -1646,7 +2470,7 @@ export default function POS() {
                             <Check className="w-3.5 h-3.5" /> Fully Paid ({completedSaleModal.paymentMethod || 'Cash'})
                           </span>
                           {completedSaleModal.chequeNo && (
-                            <div className="text-[11px] text-muted mt-1 font-mono">
+                            <div className="text-[11px] text-muted mt-1">
                               Chq #{completedSaleModal.chequeNo} {completedSaleModal.bankName ? `(${completedSaleModal.bankName})` : ''}
                             </div>
                           )}
@@ -1657,7 +2481,7 @@ export default function POS() {
                             Paid: ₹{completedSaleModal.paidAmount.toFixed(2)} ({completedSaleModal.paymentMethod || 'Cash'})
                           </div>
                           {completedSaleModal.chequeNo && (
-                            <div className="text-[11px] text-muted font-mono">
+                            <div className="text-[11px] text-muted">
                               Chq #{completedSaleModal.chequeNo} {completedSaleModal.bankName ? `(${completedSaleModal.bankName})` : ''}
                             </div>
                           )}
@@ -1762,7 +2586,16 @@ export default function POS() {
                   type="button"
                   onClick={() => {
                     if (editSaleId) {
-                      navigate('/daybook', { state: { activeTab: 'sales' } });
+                      if (location.state?.from === 'contacts' && location.state?.partyId) {
+                        navigate('/contacts', {
+                          state: {
+                            activeTab: location.state.partyType || 'customers',
+                            selectedPartyId: location.state.partyId
+                          }
+                        });
+                      } else {
+                        navigate('/daybook', { state: { activeTab: 'sales' } });
+                      }
                     } else {
                       setCompletedSaleModal(null);
                       setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -1771,7 +2604,13 @@ export default function POS() {
                   className="px-4 py-2 text-xs font-medium rounded-lg border border-hairline bg-canvas hover:bg-surface-strong text-ink transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5 text-muted" />
-                  <span>{editSaleId ? 'Done / Back to DayBook' : 'Next Sale'}</span>
+                  <span>
+                    {editSaleId
+                      ? location.state?.from === 'contacts'
+                        ? 'Done / Back to Profile'
+                        : 'Done / Back to DayBook'
+                      : 'Next Sale'}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -1786,6 +2625,311 @@ export default function POS() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Dispatch & Transport Details Modal (GST & e-Way Bill) */}
+      {showDispatchModal && (
+        <div 
+          className="fixed inset-0 bg-ink/40 backdrop-blur-xs flex items-center justify-center z-50 p-4"
+          onKeyDown={e => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              setShowDispatchModal(false);
+            }
+          }}
+        >
+          <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-hairline animate-in fade-in zoom-in duration-150 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 border-b border-hairline flex justify-between items-center bg-surface-soft shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                  <Truck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-ink">Dispatch & Transport Details</h2>
+                  <p className="text-[11px] text-muted">e-Way Bill & movement info printed on Tax Invoice</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDispatchModal(false)}
+                className="text-muted hover:text-ink transition-colors p-1.5 rounded-md hover:bg-surface-strong cursor-pointer"
+                title="Close (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form 
+              onSubmit={e => {
+                e.preventDefault();
+                setShowDispatchModal(false);
+              }}
+              className="p-5 overflow-y-auto space-y-4"
+            >
+              {grandTotal >= 100000 && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                  <span className="text-base shrink-0 leading-none mt-0.5">⚠️</span>
+                  <div>
+                    <span className="font-semibold block">Required for Sales ≥ ₹1,00,000</span>
+                    Total sale amount is <span className="font-bold tabular-nums">₹{grandTotal.toFixed(2)}</span>. Under GST movement rules, e-Way Bill and vehicle dispatch details are mandatory on the Tax Invoice.
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                {/* e-Way Bill No */}
+                <div className="col-span-2 sm:col-span-1">
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    e-Way Bill No. {grandTotal >= 100000 && <span className="text-amber-600 font-bold">*</span>}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 562030054740"
+                    value={dispatchDetails.ewayBillNo || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, ewayBillNo: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary font-mono text-xs shadow-2xs"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Motor Vehicle No */}
+                <div className="col-span-2 sm:col-span-1">
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Motor Vehicle No. {grandTotal >= 100000 && <span className="text-amber-600 font-bold">*</span>}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. TN28BB1685"
+                    value={dispatchDetails.motorVehicleNo || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, motorVehicleNo: e.target.value.toUpperCase() }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary font-mono uppercase text-xs shadow-2xs"
+                  />
+                </div>
+
+                {/* Dispatch Doc No */}
+                <div>
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Dispatch Doc No. / Delivery Note
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. DN-1428086"
+                    value={dispatchDetails.dispatchDocNo || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, dispatchDocNo: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
+                  />
+                </div>
+
+                {/* Dispatched Through */}
+                <div>
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Dispatched Through
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Road / VRL / Tempo"
+                    value={dispatchDetails.dispatchedThrough || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, dispatchedThrough: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
+                  />
+                </div>
+
+                {/* Destination */}
+                <div>
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Destination
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Coimbatore, Salem, City"
+                    value={dispatchDetails.destination || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, destination: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
+                  />
+                </div>
+
+                {/* Carrier Name / Agent */}
+                <div>
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Carrier Name / Agent
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Transporter Name"
+                    value={dispatchDetails.carrierName || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, carrierName: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
+                  />
+                </div>
+
+                {/* Bill of Lading / LR-RR No */}
+                <div>
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Bill of Lading / LR-RR No.
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. LR-40912"
+                    value={dispatchDetails.billOfLadingNo || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, billOfLadingNo: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
+                  />
+                </div>
+
+                {/* Terms of Delivery */}
+                <div>
+                  <label className="text-[11px] font-semibold text-ink block mb-1">
+                    Terms of Delivery
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Door Delivery / Paid"
+                    value={dispatchDetails.termsOfDelivery || ''}
+                    onChange={e => setDispatchDetails(prev => ({ ...prev, termsOfDelivery: e.target.value }))}
+                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer Inside Form for Enter Key Handling */}
+              <div className="pt-3 border-t border-hairline flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDispatchDetails({
+                      ewayBillNo: '',
+                      dispatchDocNo: '',
+                      dispatchedThrough: '',
+                      destination: '',
+                      carrierName: '',
+                      billOfLadingNo: '',
+                      motorVehicleNo: '',
+                      termsOfDelivery: ''
+                    });
+                  }}
+                  className="px-3 py-1.5 text-xs text-muted hover:text-signature-coral transition-colors font-medium cursor-pointer"
+                >
+                  Clear Details
+                </button>
+
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Save & Apply (Enter)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add Customer Modal */}
+      {isQuickCustomerModalOpen && (
+        <div 
+          className="fixed inset-0 bg-ink/40 backdrop-blur-xs flex items-center justify-center z-50 p-4"
+          onKeyDown={e => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              closeQuickCustomerModal();
+            }
+          }}
+        >
+          <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-hairline animate-in fade-in zoom-in duration-150">
+            <div className="px-5 py-3.5 border-b border-hairline flex justify-between items-center bg-surface-soft">
+              <h2 className="text-sm font-bold text-ink flex items-center gap-2">
+                <UserPlus className="w-4 h-4 text-primary" />
+                Add New Customer
+              </h2>
+              <button
+                type="button"
+                onClick={closeQuickCustomerModal}
+                disabled={isSavingQuickCustomer}
+                className="text-muted hover:text-ink transition-colors p-1 rounded-md"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveQuickCustomer} className="p-5 space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Customer / Business Name *
+                </label>
+                <input
+                  required
+                  autoFocus
+                  type="text"
+                  value={quickCustomerName}
+                  onChange={e => setQuickCustomerName(e.target.value)}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted font-medium"
+                  placeholder="e.g. Suresh Traders or Rajesh Kumar"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Phone Number
+                </label>
+                <input
+                  type="text"
+                  value={quickCustomerPhone}
+                  onChange={e => setQuickCustomerPhone(e.target.value)}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted"
+                  placeholder="+91 9876543210"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  GSTIN Number
+                </label>
+                <input
+                  type="text"
+                  value={quickCustomerGstin}
+                  onChange={e => setQuickCustomerGstin(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm uppercase focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted"
+                  placeholder="27ABCDE1234F1Z5"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Address / City
+                </label>
+                <textarea
+                  rows={2}
+                  value={quickCustomerAddress}
+                  onChange={e => setQuickCustomerAddress(e.target.value)}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted resize-none"
+                  placeholder="City, Area or complete address"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-hairline flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={closeQuickCustomerModal}
+                  disabled={isSavingQuickCustomer}
+                  className="px-4 py-2 text-xs font-medium text-ink hover:bg-surface-soft rounded-lg transition-colors border border-hairline"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingQuickCustomer || !quickCustomerName.trim()}
+                  className="px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary-active text-on-primary rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isSavingQuickCustomer && <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1" />}
+                  {isSavingQuickCustomer ? 'Saving...' : 'Save & Select'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -57,11 +57,33 @@ export default function Returns() {
   }
 
   function getEffectivePrice(item: TransactionDetail['items'][0], tx: TransactionDetail | null): number {
-    if (!tx || !tx.discount || tx.discount <= 0) return item.unit_price;
-    const totalGross = tx.items.reduce((s, it) => s + (it.unit_price * it.quantity), 0);
-    if (totalGross <= 0) return item.unit_price;
-    const discountRatio = tx.discount / totalGross;
-    return Number((item.unit_price * (1 - discountRatio)).toFixed(2));
+    if (!item || !item.quantity || item.quantity <= 0) return item.unit_price;
+    const lineGrossAndTax = (item.unit_price * item.quantity) + (item.tax || 0);
+    if (!tx || !tx.discount || tx.discount <= 0) {
+      return Number((lineGrossAndTax / item.quantity).toFixed(2));
+    }
+    const totalGrossAndTax = tx.items.reduce((s, it) => s + (it.unit_price * it.quantity) + (it.tax || 0), 0);
+    if (totalGrossAndTax <= 0) {
+      return Number((lineGrossAndTax / item.quantity).toFixed(2));
+    }
+    const discountRatio = tx.discount / totalGrossAndTax;
+    const effTotalLine = lineGrossAndTax * (1 - discountRatio);
+    return Number((effTotalLine / item.quantity).toFixed(2));
+  }
+
+  function formatReturnDate(dateStr?: string | null) {
+    if (!dateStr) return { date: '-', time: '' };
+    try {
+      const cleanStr = dateStr.includes('T') ? dateStr : dateStr.replace(' ', 'T');
+      const d = new Date(cleanStr);
+      if (isNaN(d.getTime())) return { date: dateStr.split(' ')[0], time: '' };
+      return {
+        date: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        time: dateStr.includes(' ') || dateStr.includes('T') ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''
+      };
+    } catch (e) {
+      return { date: dateStr.split(' ')[0], time: '' };
+    }
   }
 
   function handleSelectTx(tx: TransactionDetail) {
@@ -89,8 +111,21 @@ export default function Returns() {
     
     const itemsToReturn = selectedTx.items.filter(i => (returnQtys[i.product_id] || 0) > 0);
     if (itemsToReturn.length === 0) {
-      alert("Please select at least one item to return.");
+      alert("Please enter a return quantity for at least one item.");
       return;
+    }
+
+    // For supplier returns, validate that the shop actually has enough stock to return
+    if (activeTab === 'suppliers') {
+      for (const item of itemsToReturn) {
+        const qty = returnQtys[item.product_id];
+        const prod = products.find(p => p.id === item.product_id);
+        const availableStock = prod ? prod.stock_quantity : 0;
+        if (qty > availableStock) {
+          alert(`Cannot return ${qty} of "${item.name}". Only ${availableStock} currently available in stock.`);
+          return;
+        }
+      }
     }
 
     setIsProcessing(true);
@@ -122,9 +157,9 @@ export default function Returns() {
       setReturnQtys({});
       setReason('');
       loadReturns();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert(`Error processing return: ${e}`);
+      alert(`Error processing return: ${e?.message || e}`);
     } finally {
       setIsProcessing(false);
     }
@@ -195,16 +230,22 @@ export default function Returns() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {returns.map((r) => (
-                <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4 text-slate-600">{r.date.split(' ')[0]}</td>
-                  <td className="px-6 py-4 font-medium text-slate-800">{getEntityName(r.entity_id)}</td>
-                  <td className="px-6 py-4 text-slate-600">{getProductName(r.product_id)}</td>
-                  <td className="px-6 py-4 text-right font-medium">{r.quantity}</td>
-                  <td className="px-6 py-4 text-right text-slate-800 font-semibold text-lg">₹{r.amount.toFixed(2)}</td>
-                  <td className="px-6 py-4 text-slate-500 text-sm max-w-xs truncate">{r.reason || '-'}</td>
-                </tr>
-              ))}
+              {returns.map((r) => {
+                const dt = formatReturnDate(r.date);
+                return (
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4 text-slate-600">
+                      <div className="font-medium text-slate-800">{dt.date}</div>
+                      {dt.time && <div className="text-[11px] text-slate-400 font-mono">{dt.time}</div>}
+                    </td>
+                    <td className="px-6 py-4 font-medium text-slate-800">{getEntityName(r.entity_id)}</td>
+                    <td className="px-6 py-4 text-slate-600">{getProductName(r.product_id)}</td>
+                    <td className="px-6 py-4 text-right font-medium">{r.quantity}</td>
+                    <td className="px-6 py-4 text-right text-slate-800 font-semibold text-lg">₹{r.amount.toFixed(2)}</td>
+                    <td className="px-6 py-4 text-slate-500 text-sm max-w-xs truncate">{r.reason || '-'}</td>
+                  </tr>
+                );
+              })}
               {returns.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-12 text-center text-slate-500">
@@ -311,7 +352,10 @@ export default function Returns() {
                     <div>
                       <p className="text-xs text-slate-500 font-medium mb-1">DATE</p>
                       <p className="font-semibold text-slate-800 text-lg">
-                        {new Date(selectedTx.date.split(' ')[0]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        {formatReturnDate(selectedTx.date).date}
+                        {formatReturnDate(selectedTx.date).time && (
+                          <span className="text-xs font-normal text-slate-500 block">{formatReturnDate(selectedTx.date).time}</span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -321,7 +365,7 @@ export default function Returns() {
                       <thead className="bg-slate-50 border-b border-slate-200">
                         <tr>
                           <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Product</th>
-                          <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Billed Price</th>
+                          <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Billed Rate (Incl. GST)</th>
                           <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Purchased Qty</th>
                           <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Return Qty</th>
                           <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Refund</th>
@@ -333,7 +377,7 @@ export default function Returns() {
                           const maxReturnable = Math.max(0, item.quantity - returnedQty);
                           const returnQty = returnQtys[item.product_id] || 0;
                           const effPrice = getEffectivePrice(item, selectedTx);
-                          const hasDiscount = (selectedTx.discount || 0) > 0 && effPrice < item.unit_price;
+                          const hasDiscount = (selectedTx.discount || 0) > 0;
                           return (
                             <tr key={item.product_id} className={returnQty > 0 ? "bg-blue-50/50" : ""}>
                               <td className="px-4 py-4">
@@ -341,12 +385,10 @@ export default function Returns() {
                                 {item.model && <p className="text-xs text-slate-500">{item.model}</p>}
                               </td>
                               <td className="px-4 py-4 text-right text-slate-600 font-medium">
-                                ₹{item.unit_price.toFixed(2)}
-                                {hasDiscount && (
-                                  <span className="block text-[10px] text-emerald-600 font-normal">
-                                    Eff: ₹{effPrice.toFixed(2)}
-                                  </span>
-                                )}
+                                ₹{effPrice.toFixed(2)}
+                                <span className="block text-[10px] text-slate-400 font-normal">
+                                  Base ₹{item.unit_price.toFixed(2)}{item.tax ? ` + Tax` : ''}{hasDiscount ? ` (Disc)` : ''}
+                                </span>
                               </td>
                               <td className="px-4 py-4 text-right text-slate-600">
                                 <div>{item.quantity} {item.unit}</div>
@@ -360,10 +402,11 @@ export default function Returns() {
                                 <input 
                                   type="number" 
                                   min="0" 
+                                  step="any"
                                   max={maxReturnable} 
                                   disabled={maxReturnable <= 0}
                                   value={returnQty || ''} 
-                                  onChange={(e) => handleQtyChange(item.product_id, parseInt(e.target.value) || 0, maxReturnable)}
+                                  onChange={(e) => handleQtyChange(item.product_id, parseFloat(e.target.value) || 0, maxReturnable)}
                                   className="w-24 px-3 py-2 text-right font-semibold border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all disabled:bg-slate-100 disabled:text-slate-400"
                                   placeholder={maxReturnable <= 0 ? "Done" : "0"}
                                 />

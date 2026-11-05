@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, X, Truck, FileText, IndianRupee, Store, Building2 } from 'lucide-react';
+import { Search, X, Truck, FileText, IndianRupee, Store, Building2, Edit, Eye, Plus } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getSellableProducts, getSuppliers, recordPurchase, getPurchaseById, updatePurchaseBill, getWarehouses } from '../lib/db';
+import { getSellableProducts, getSuppliers, recordPurchase, getPurchaseById, updatePurchaseBill, getWarehouses, addSupplier } from '../lib/db';
 import type { Product, Supplier, PurchaseItem, Warehouse } from '../lib/db';
 
 export default function Purchases() {
@@ -16,9 +16,47 @@ export default function Purchases() {
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
   const editPurchaseIdParam = searchParams.get('editId');
+  const viewPurchaseIdParam = searchParams.get('viewId');
   const editPurchaseId = editPurchaseIdParam ? Number(editPurchaseIdParam) : undefined;
+  const viewPurchaseId = viewPurchaseIdParam ? Number(viewPurchaseIdParam) : undefined;
+  const isPurchaseViewOnly = Boolean(viewPurchaseId && !editPurchaseId);
+  const activePurchaseId = editPurchaseId || viewPurchaseId;
 
   const [cart, setCart] = useState<PurchaseItem[]>([]);
+  const [editingPurchaseInvoiceNo, setEditingPurchaseInvoiceNo] = useState<string | null>(null);
+
+  // Global Edit Mode Lock flag for app-wide navigation prevention
+  useEffect(() => {
+    if (activePurchaseId) {
+      (window as any).__isEditingActive = true;
+    } else {
+      (window as any).__isEditingActive = false;
+    }
+    return () => {
+      (window as any).__isEditingActive = false;
+    };
+  }, [activePurchaseId]);
+
+  function handleExitPurchase() {
+    (window as any).__isEditingActive = false;
+    if (location.state?.from === 'contacts' && location.state?.partyId) {
+      navigate('/contacts', {
+        state: {
+          activeTab: location.state.partyType || 'suppliers',
+          selectedPartyId: location.state.partyId
+        }
+      });
+    } else {
+      navigate('/daybook', { 
+        state: { 
+          activeTab: 'purchases',
+          startDate: (location.state as any)?.startDate,
+          endDate: (location.state as any)?.endDate
+        } 
+      });
+    }
+  }
+
   const getLocalDate = () => {
     const d = new Date();
     const offset = d.getTimezoneOffset() * 60000;
@@ -45,6 +83,74 @@ export default function Purchases() {
     s.name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
     (s.phone && s.phone.includes(supplierSearch))
   );
+
+  // Quick Add Supplier state & handlers
+  const [isQuickSupplierModalOpen, setIsQuickSupplierModalOpen] = useState(false);
+  const [quickSupplierName, setQuickSupplierName] = useState('');
+  const [quickSupplierPhone, setQuickSupplierPhone] = useState('');
+  const [quickSupplierGstin, setQuickSupplierGstin] = useState('');
+  const [quickSupplierAddress, setQuickSupplierAddress] = useState('');
+  const [isSavingQuickSupplier, setIsSavingQuickSupplier] = useState(false);
+
+  function openQuickSupplierModal(initialName: string = '') {
+    setQuickSupplierName(initialName);
+    setQuickSupplierPhone('');
+    setQuickSupplierGstin('');
+    setQuickSupplierAddress('');
+    setIsQuickSupplierModalOpen(true);
+  }
+
+  function closeQuickSupplierModal() {
+    setIsQuickSupplierModalOpen(false);
+    setQuickSupplierName('');
+    setQuickSupplierPhone('');
+    setQuickSupplierGstin('');
+    setQuickSupplierAddress('');
+  }
+
+  async function handleSaveQuickSupplier(e: React.FormEvent) {
+    e.preventDefault();
+    if (!quickSupplierName.trim()) return;
+
+    try {
+      setIsSavingQuickSupplier(true);
+      const cleanName = quickSupplierName.trim();
+      const cleanPhone = quickSupplierPhone.trim();
+      const cleanGstin = quickSupplierGstin.replace(/\s+/g, '').toUpperCase();
+      const cleanAddress = quickSupplierAddress.trim();
+
+      const newId = await addSupplier(cleanName, cleanPhone, '', cleanAddress, cleanGstin);
+      const updatedList = await getSuppliers();
+      setSuppliers(updatedList);
+      setSupplierId(newId);
+      setSupplierSearch(cleanName);
+      closeQuickSupplierModal();
+      setIsSupplierDropdownOpen(false);
+    } catch (err) {
+      console.error('Failed to create supplier:', err);
+      alert(`Error creating supplier: ${err}`);
+    } finally {
+      setIsSavingQuickSupplier(false);
+    }
+  }
+
+  // Global Escape key handler to cancel active purchase view/edit or close quick supplier modal
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isQuickSupplierModalOpen) {
+          setIsQuickSupplierModalOpen(false);
+          return;
+        }
+        if (activePurchaseId) {
+          e.preventDefault();
+          handleExitPurchase();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [activePurchaseId, isQuickSupplierModalOpen, location.state]);
 
   const [discount, setDiscount] = useState<number>(0);
   const [discountType, setDiscountType] = useState<'amount' | 'percentage'>('percentage');
@@ -77,15 +183,16 @@ export default function Purchases() {
 
   useEffect(() => {
     loadData();
-    if (editPurchaseId) {
-      loadEditData(editPurchaseId);
+    if (activePurchaseId) {
+      loadEditData(activePurchaseId);
     }
-  }, [editPurchaseId]);
+  }, [activePurchaseId]);
 
   async function loadEditData(id: number) {
     try {
       const p = await getPurchaseById(id);
       if (p) {
+        setEditingPurchaseInvoiceNo(p.invoice_number || `Purchase #${p.id}`);
         setSupplierId(p.entity_id);
         setInvoiceNo(p.invoice_number || '');
         if (p.date) setSupplierInvoiceDate(p.date.split(' ')[0]);
@@ -161,6 +268,7 @@ export default function Purchases() {
   };
 
   function addToCart(product: Product) {
+    if (isPurchaseViewOnly) return;
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
@@ -173,9 +281,8 @@ export default function Purchases() {
     setSearch('');
   }
 
-
-
   function setQty(id: number, qty: number) {
+    if (isPurchaseViewOnly) return;
     setCart(prev => prev.map(item => {
       if (item.id === id) {
         return { ...item, purchase_qty: Math.max(0, qty) };
@@ -185,6 +292,7 @@ export default function Purchases() {
   }
 
   function updateRate(id: number, newRate: number) {
+    if (isPurchaseViewOnly) return;
     setCart(prev => prev.map(item => {
       if (item.id === id) {
         return { ...item, purchase_price: newRate };
@@ -194,6 +302,7 @@ export default function Purchases() {
   }
 
   function removeFromCart(id: number) {
+    if (isPurchaseViewOnly) return;
     setCart(prev => prev.filter(item => item.id !== id));
   }
 
@@ -316,6 +425,7 @@ export default function Purchases() {
           destinationType === 'warehouse' ? Number(destinationWarehouseId) : null
         );
         alert('Purchase bill updated successfully!');
+        (window as any).__isEditingActive = false;
         navigate('/daybook', { 
           state: { 
             activeTab: 'purchases',
@@ -365,29 +475,82 @@ export default function Purchases() {
       {/* 1. Left Column: Purchase Details & Cart */}
       <div className="flex-1 bg-canvas flex flex-col z-10 relative border-r border-hairline">
         <div className="p-6 border-b border-hairline bg-surface-soft space-y-4">
+          {isPurchaseViewOnly && (
+            <div className="flex items-center justify-between text-xs bg-primary/10 text-primary border border-primary/25 px-3 py-1.5 rounded-md font-semibold">
+              <div className="flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 shrink-0" />
+                <span>Viewing Purchase Bill: {editingPurchaseInvoiceNo || invoiceNo || `#${activePurchaseId}`}</span>
+                <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.2 rounded font-medium">Read-Only</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleExitPurchase}
+                className="ml-2 px-2 py-0.5 text-xs font-semibold bg-canvas text-primary hover:bg-primary hover:text-on-primary rounded border border-primary/30 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                title={location.state?.from === 'contacts' ? "Close viewing purchase bill and return to Supplier Profile (Esc)" : "Close viewing purchase bill and return to Day Book (Esc)"}
+              >
+                <span>Close</span>
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {editPurchaseId && (
+            <div className="flex items-center justify-between text-xs bg-primary/10 text-primary border border-primary/25 px-3 py-1.5 rounded-md font-semibold">
+              <div className="flex items-center gap-1.5">
+                <Edit className="w-3.5 h-3.5 shrink-0" />
+                <span>Editing Purchase Bill: {editingPurchaseInvoiceNo || invoiceNo || `#${editPurchaseId}`}</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleExitPurchase}
+                className="ml-2 px-2 py-0.5 text-xs font-semibold bg-canvas text-primary hover:bg-primary hover:text-on-primary rounded border border-primary/30 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                title={location.state?.from === 'contacts' ? "Cancel editing purchase bill and return to Supplier Profile (Esc)" : "Cancel editing purchase bill and return to Day Book (Esc)"}
+              >
+                <span>Cancel</span>
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           <div className="relative">
-            <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex items-center"><Truck className="w-3.5 h-3.5 mr-1" /> Supplier *</label>
-            <div className="flex items-center w-full bg-canvas rounded-sm border border-hairline focus-within:border-ink transition-colors">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-muted uppercase tracking-wider flex items-center">
+                <Truck className="w-3.5 h-3.5 mr-1" /> Supplier *
+              </label>
+              {!isPurchaseViewOnly && (
+                <button
+                  type="button"
+                  onClick={() => openQuickSupplierModal(supplierSearch)}
+                  className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Create new supplier directly"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Supplier</span>
+                </button>
+              )}
+            </div>
+            <div className={`flex items-center w-full bg-canvas rounded-sm border border-hairline ${isPurchaseViewOnly ? 'opacity-70 cursor-not-allowed' : 'focus-within:border-ink'} transition-colors`}>
               <input
                 type="text"
                 placeholder="-- Select Supplier --"
-                className="flex-1 bg-transparent px-3 py-2 text-sm outline-none text-ink font-medium placeholder-ink"
+                disabled={isPurchaseViewOnly}
+                className={`flex-1 bg-transparent px-3 py-2 text-sm outline-none text-ink font-medium placeholder-ink ${isPurchaseViewOnly ? 'cursor-not-allowed' : ''}`}
                 value={supplierSearch}
                 onChange={(e) => {
                   setSupplierSearch(e.target.value);
                   setIsSupplierDropdownOpen(true);
                   if (e.target.value === '') setSupplierId('');
                 }}
-                onFocus={() => setIsSupplierDropdownOpen(true)}
+                onFocus={() => { if (!isPurchaseViewOnly) setIsSupplierDropdownOpen(true); }}
               />
-              {supplierId !== '' && (
+              {supplierId !== '' && !isPurchaseViewOnly && (
                 <button onClick={() => { setSupplierId(''); setSupplierSearch(''); }} className="px-3 text-muted hover:text-ink">
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            {isSupplierDropdownOpen && (
+            {isSupplierDropdownOpen && !isPurchaseViewOnly && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setIsSupplierDropdownOpen(false)} />
                 <div className="absolute top-full left-0 right-0 mt-1 bg-canvas border border-hairline rounded-lg shadow-xl max-h-60 overflow-y-auto z-50">
@@ -398,10 +561,27 @@ export default function Purchases() {
                         setSupplierSearch('');
                         setIsSupplierDropdownOpen(false);
                       }}
-                      className="p-3 hover:bg-surface-soft cursor-pointer text-sm font-medium text-ink"
+                      className="p-3 hover:bg-surface-soft cursor-pointer text-sm font-medium text-muted"
                     >
                       -- Select Supplier --
                     </li>
+
+                    {/* Quick creation option at the exact spot requested by the user */}
+                    <li
+                      onClick={() => {
+                        setIsSupplierDropdownOpen(false);
+                        openQuickSupplierModal(supplierSearch.trim());
+                      }}
+                      className="p-3 bg-primary/5 hover:bg-primary/10 text-primary cursor-pointer text-sm font-semibold flex items-center gap-2 transition-colors border-b border-hairline"
+                    >
+                      <Plus className="w-4 h-4 shrink-0 text-primary" />
+                      <span>
+                        {supplierSearch.trim()
+                          ? `+ Add "${supplierSearch.trim()}" as New Supplier`
+                          : '+ Add New Supplier'}
+                      </span>
+                    </li>
+
                     {filteredSuppliers.map(s => (
                       <li
                         key={s.id}
@@ -413,7 +593,10 @@ export default function Purchases() {
                         className="p-3 hover:bg-surface-soft cursor-pointer text-sm flex justify-between items-center"
                       >
                         <span className="font-medium text-ink">{s.name}</span>
-                        {s.balance > 0 && <span className="text-xs text-signature-coral font-medium">Bal: ₹{s.balance.toFixed(0)}</span>}
+                        <div className="flex items-center gap-1.5">
+                          {s.balance > 0 && <span className="text-xs text-signature-coral font-medium">Due: ₹{s.balance.toFixed(0)}</span>}
+                          {(s.advance_balance || 0) > 0 && <span className="text-xs text-emerald-600 font-semibold">Adv: ₹{(s.advance_balance || 0).toFixed(0)}</span>}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -427,19 +610,21 @@ export default function Purchases() {
               <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex items-center"><FileText className="w-3.5 h-3.5 mr-1" /> Invoice No *</label>
               <input
                 type="text"
+                disabled={isPurchaseViewOnly}
                 value={invoiceNo}
                 onChange={e => setInvoiceNo(e.target.value)}
                 placeholder="e.g. INV-1001"
-                className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink uppercase text-sm placeholder-muted"
+                className={`w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink uppercase text-sm placeholder-muted ${isPurchaseViewOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
               />
             </div>
             <div className="w-1/3">
               <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2 flex items-center">Invoice Date</label>
               <input
                 type="date"
+                disabled={isPurchaseViewOnly}
                 value={supplierInvoiceDate}
                 onChange={e => setSupplierInvoiceDate(e.target.value)}
-                className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink text-sm"
+                className={`w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink text-sm ${isPurchaseViewOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
               />
             </div>
           </div>
@@ -458,12 +643,13 @@ export default function Purchases() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                disabled={isPurchaseViewOnly}
                 onClick={() => setDestinationType('shop')}
                 className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm border transition-all ${
                   destinationType === 'shop'
                     ? 'bg-ink text-canvas border-ink shadow-sm'
                     : 'bg-canvas text-muted hover:text-ink border-hairline hover:border-ink/40'
-                }`}
+                } ${isPurchaseViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
               >
                 <Store className="w-3.5 h-3.5" />
                 <span>Main Shop</span>
@@ -472,12 +658,13 @@ export default function Purchases() {
               
               <button
                 type="button"
+                disabled={isPurchaseViewOnly}
                 onClick={() => setDestinationType('warehouse')}
                 className={`flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-sm border transition-all ${
                   destinationType === 'warehouse'
                     ? 'bg-ink text-canvas border-ink shadow-sm'
                     : 'bg-canvas text-muted hover:text-ink border-hairline hover:border-ink/40'
-                }`}
+                } ${isPurchaseViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
               >
                 <Building2 className="w-3.5 h-3.5" />
                 <span>Warehouse / Godown</span>
@@ -498,8 +685,9 @@ export default function Purchases() {
                     </label>
                     <select
                       value={destinationWarehouseId}
+                      disabled={isPurchaseViewOnly}
                       onChange={(e) => setDestinationWarehouseId(Number(e.target.value))}
-                      className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink text-xs cursor-pointer shadow-sm"
+                      className={`w-full px-3 py-2 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink font-medium text-ink text-xs shadow-sm ${isPurchaseViewOnly ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
                     >
                       {warehouses.map((wh) => (
                         <option key={wh.id} value={wh.id}>
@@ -534,13 +722,14 @@ export default function Purchases() {
                 <h3 className="text-sm font-medium text-ink truncate leading-tight">{item.name}</h3>
                 <div className="text-xs text-muted mt-1 flex flex-col gap-0.5">
                   <div className="flex items-center">
-                    <div className="flex items-center border-b border-hairline focus-within:border-ink transition-colors">
+                    <div className={`flex items-center border-b border-hairline ${isPurchaseViewOnly ? 'opacity-80' : 'focus-within:border-ink'} transition-colors`}>
                       <span className="text-muted mr-0.5">₹</span>
                       <input
                         type="number"
+                        disabled={isPurchaseViewOnly}
                         value={item.purchase_price === 0 ? '' : item.purchase_price}
                         onChange={(e) => updateRate(item.id, Number(e.target.value) || 0)}
-                        className="w-16 bg-transparent outline-none text-ink font-medium text-xs text-right"
+                        className={`w-16 bg-transparent outline-none text-ink font-medium text-xs text-right ${isPurchaseViewOnly ? 'cursor-not-allowed' : ''}`}
                         title="Purchase Rate"
                       />
                     </div>
@@ -551,21 +740,29 @@ export default function Purchases() {
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
-                <div className="flex items-center bg-surface-soft border border-hairline rounded-sm p-0.5">
-                  <input
-                    type="number"
-                    min="1"
-                    value={item.purchase_qty === 0 ? '' : item.purchase_qty}
-                    onChange={(e) => setQty(item.id, Number(e.target.value) || 0)}
-                    className="w-12 text-center text-sm font-medium text-ink bg-transparent focus:outline-none"
-                  />
-                </div>
+                {isPurchaseViewOnly ? (
+                  <span className="px-2 py-0.5 bg-surface-soft border border-hairline rounded-sm text-xs font-semibold text-ink">
+                    Qty: {item.purchase_qty}
+                  </span>
+                ) : (
+                  <div className="flex items-center bg-surface-soft border border-hairline rounded-sm p-0.5">
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.purchase_qty === 0 ? '' : item.purchase_qty}
+                      onChange={(e) => setQty(item.id, Number(e.target.value) || 0)}
+                      className="w-12 text-center text-sm font-medium text-ink bg-transparent focus:outline-none"
+                    />
+                  </div>
+                )}
                 <div className="w-[60px] text-right">
                   <span className="font-medium text-ink text-sm">₹{(item.purchase_price * item.purchase_qty).toFixed(0)}</span>
                 </div>
-                <button onClick={() => removeFromCart(item.id)} className="text-muted hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity p-1">
-                  <X className="w-4 h-4" />
-                </button>
+                {!isPurchaseViewOnly && (
+                  <button onClick={() => removeFromCart(item.id)} className="text-muted hover:text-ink opacity-0 group-hover:opacity-100 transition-opacity p-1 cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -595,18 +792,21 @@ export default function Purchases() {
               <span>Discount</span>
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
+                  disabled={isPurchaseViewOnly}
                   onClick={() => setDiscountType(prev => prev === 'amount' ? 'percentage' : 'amount')}
-                  className="text-xs font-medium bg-canvas border border-hairline text-ink hover:bg-surface-strong px-1.5 py-0.5 rounded-xs transition-colors select-none"
+                  className={`text-xs font-medium bg-canvas border border-hairline text-ink hover:bg-surface-strong px-1.5 py-0.5 rounded-xs transition-colors select-none ${isPurchaseViewOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                 >
                   {discountType === 'amount' ? '₹' : '%'}
                 </button>
                 <input
                   type="number" min="0"
+                  disabled={isPurchaseViewOnly}
                   max={discountType === 'percentage' ? 100 : undefined}
                   value={discount === 0 ? '' : discount}
                   onChange={(e) => setDiscount(Number(e.target.value) || 0)}
                   placeholder="0"
-                  className="w-16 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-ink font-medium text-ink transition-colors"
+                  className={`w-16 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-ink font-medium text-ink transition-colors ${isPurchaseViewOnly ? 'cursor-not-allowed' : ''}`}
                 />
               </div>
             </div>
@@ -657,11 +857,14 @@ export default function Purchases() {
                 <div className="flex justify-between items-center text-sm text-body pt-4 pb-2 border-t border-hairline mt-4">
                   <span className="font-medium text-ink">Amount Paid</span>
                   <div className="flex items-center gap-2">
-                    <button onClick={payInFull} className="text-xs text-primary font-medium hover:underline">Pay Full</button>
-                    <div className="flex items-center border-b border-hairline bg-transparent focus-within:border-ink transition-colors">
+                    {!isPurchaseViewOnly && (
+                      <button onClick={payInFull} className="text-xs text-primary font-medium hover:underline">Pay Full</button>
+                    )}
+                    <div className={`flex items-center border-b border-hairline bg-transparent ${isPurchaseViewOnly ? 'opacity-70' : 'focus-within:border-ink'} transition-colors`}>
                       <span className="text-muted font-medium mr-1">₹</span>
                       <input
                         type="number" min="0" max={grandTotal}
+                        disabled={isPurchaseViewOnly}
                         value={paidAmount === 0 ? '' : paidAmount}
                         onChange={(e) => {
                           let val = Number(e.target.value) || 0;
@@ -669,7 +872,7 @@ export default function Purchases() {
                           setPaidAmount(val);
                         }}
                         placeholder="0"
-                        className="w-20 text-right bg-transparent focus:outline-none font-medium text-ink py-0.5"
+                        className={`w-20 text-right bg-transparent focus:outline-none font-medium text-ink py-0.5 ${isPurchaseViewOnly ? 'cursor-not-allowed' : ''}`}
                       />
                     </div>
                   </div>
@@ -685,26 +888,56 @@ export default function Purchases() {
         
         {/* Checkout Buttons */}
         <div className="p-4 bg-canvas border-t border-hairline flex flex-col gap-3">
-          <button
-            onClick={handleRecord}
-            disabled={cart.length === 0 || supplierId === '' || invoiceNo.trim() === '' || isProcessing}
-            title="Save / Record Purchase (Ctrl+S)"
-            className={`w-full font-medium py-3 rounded-lg flex justify-center items-center text-base transition-colors ${cart.length === 0 || supplierId === '' || invoiceNo.trim() === '' || isProcessing ? 'bg-surface-strong text-muted cursor-not-allowed' : 'bg-primary hover:bg-primary-active text-on-primary'}`}
-          >
-            <IndianRupee className="w-4 h-4 mr-2" /> {isProcessing ? 'Processing...' : (editPurchaseId ? 'Update Purchase Bill (Ctrl+S)' : 'Record Purchase (Ctrl+S)')}
-          </button>
-          <button 
-            onClick={() => {
-              setCart([]);
-              setSupplierId('');
-              setSupplierSearch('');
-              setInvoiceNo('');
-            }}
-            disabled={cart.length === 0}
-            className={`w-full font-medium py-2 rounded-lg transition-colors text-sm ${cart.length === 0 ? 'bg-transparent text-muted cursor-not-allowed' : 'bg-transparent text-muted hover:bg-surface-strong hover:text-danger'}`}
-          >
-            Clear Cart
-          </button>
+          {isPurchaseViewOnly ? (
+            <button
+              type="button"
+              onClick={handleExitPurchase}
+              className="w-full font-semibold py-3 rounded-lg transition-colors text-sm bg-primary hover:bg-primary-active text-on-primary flex items-center justify-center gap-2 shadow-sm cursor-pointer active:scale-[0.99]"
+              title={location.state?.from === 'contacts' ? "Close viewing purchase bill and return to Supplier Profile (Esc)" : "Close viewing purchase bill and return to Day Book (Esc)"}
+            >
+              <X className="w-4 h-4" />
+              <span>
+                {location.state?.from === 'contacts' ? 'Close View & Exit to Supplier Profile (Esc)' : 'Close View & Exit to Day Book (Esc)'}
+              </span>
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={handleRecord}
+                disabled={cart.length === 0 || supplierId === '' || invoiceNo.trim() === '' || isProcessing}
+                title="Save / Record Purchase (Ctrl+S)"
+                className={`w-full font-medium py-3 rounded-lg flex justify-center items-center text-base transition-colors ${cart.length === 0 || supplierId === '' || invoiceNo.trim() === '' || isProcessing ? 'bg-surface-strong text-muted cursor-not-allowed' : 'bg-primary hover:bg-primary-active text-on-primary'}`}
+              >
+                <IndianRupee className="w-4 h-4 mr-2" /> {isProcessing ? 'Processing...' : (editPurchaseId ? 'Update Purchase Bill (Ctrl+S)' : 'Record Purchase (Ctrl+S)')}
+              </button>
+
+              {editPurchaseId && (
+                <button 
+                  type="button"
+                  onClick={handleExitPurchase}
+                  className="w-full font-semibold py-2 rounded-lg transition-colors text-xs border border-danger/30 text-danger hover:bg-danger/10 flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                  title={location.state?.from === 'contacts' ? "Cancel editing purchase bill and return to Supplier Profile (Esc)" : "Cancel editing purchase bill and return to Day Book (Esc)"}
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>
+                    {location.state?.from === 'contacts' ? 'Cancel Edit & Exit to Supplier Profile (Esc)' : 'Cancel Edit & Exit to Day Book (Esc)'}
+                  </span>
+                </button>
+              )}
+              <button 
+                onClick={() => {
+                  setCart([]);
+                  setSupplierId('');
+                  setSupplierSearch('');
+                  setInvoiceNo('');
+                }}
+                disabled={cart.length === 0}
+                className={`w-full font-medium py-2 rounded-lg transition-colors text-sm ${cart.length === 0 ? 'bg-transparent text-muted cursor-not-allowed' : 'bg-transparent text-muted hover:bg-surface-strong hover:text-danger'}`}
+              >
+                Clear Cart
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -712,7 +945,13 @@ export default function Purchases() {
       <div className="w-[350px] flex flex-col p-6 border-l border-hairline overflow-hidden bg-surface-soft">
         <header className="mb-6 text-center">
           <h1 className="text-2xl font-display font-medium text-ink tracking-tight">Products</h1>
-          <p className="text-sm text-body mt-1">Add to purchase</p>
+          <p className="text-sm text-body mt-1">
+            {isPurchaseViewOnly ? (
+              <span className="text-primary font-semibold">Purchase bill is in Read-Only View mode</span>
+            ) : (
+              'Add to purchase'
+            )}
+          </p>
         </header>
 
         <div className="relative w-full mb-6 z-20 shrink-0">
@@ -720,16 +959,17 @@ export default function Purchases() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted w-4 h-4" />
             <input
               type="text"
-              placeholder="Search products to add..."
-              className="w-full pl-9 pr-3 py-2.5 text-sm bg-canvas border border-hairline rounded-sm shadow-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted"
+              placeholder={isPurchaseViewOnly ? 'Bill is in read-only view mode' : 'Search products to add...'}
+              disabled={isPurchaseViewOnly}
+              className={`w-full pl-9 pr-3 py-2.5 text-sm bg-canvas border border-hairline rounded-sm shadow-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted ${isPurchaseViewOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleKeyDown}
-              autoFocus
+              autoFocus={!isPurchaseViewOnly}
             />
           </div>
 
-          {search.trim() !== '' && (
+          {!isPurchaseViewOnly && search.trim() !== '' && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-canvas border border-hairline rounded-lg shadow-xl max-h-96 overflow-y-auto">
               {filteredProducts.length > 0 ? (
                 <ul className="divide-y divide-hairline">
@@ -763,6 +1003,110 @@ export default function Purchases() {
         )}
       </div>
 
+      {/* Quick Add Supplier Modal */}
+      {isQuickSupplierModalOpen && (
+        <div 
+          className="fixed inset-0 bg-ink/40 backdrop-blur-xs flex items-center justify-center z-50 p-4"
+          onKeyDown={e => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              closeQuickSupplierModal();
+            }
+          }}
+        >
+          <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-hairline animate-in fade-in zoom-in duration-150">
+            <div className="px-5 py-3.5 border-b border-hairline flex justify-between items-center bg-surface-soft">
+              <h2 className="text-sm font-bold text-ink flex items-center gap-2">
+                <Truck className="w-4 h-4 text-primary" />
+                Add New Supplier
+              </h2>
+              <button
+                type="button"
+                onClick={closeQuickSupplierModal}
+                disabled={isSavingQuickSupplier}
+                className="text-muted hover:text-ink transition-colors p-1 rounded-md"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveQuickSupplier} className="p-5 space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Supplier / Business Name *
+                </label>
+                <input
+                  required
+                  autoFocus
+                  type="text"
+                  value={quickSupplierName}
+                  onChange={e => setQuickSupplierName(e.target.value)}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted font-medium"
+                  placeholder="e.g. Mahesh Pipe Center"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Phone Number
+                </label>
+                <input
+                  type="text"
+                  value={quickSupplierPhone}
+                  onChange={e => setQuickSupplierPhone(e.target.value)}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted"
+                  placeholder="+91 9876543210"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  GSTIN Number
+                </label>
+                <input
+                  type="text"
+                  value={quickSupplierGstin}
+                  onChange={e => setQuickSupplierGstin(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm uppercase font-mono focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted"
+                  placeholder="27ABCDE1234F1Z5"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1">
+                  Address / City
+                </label>
+                <textarea
+                  rows={2}
+                  value={quickSupplierAddress}
+                  onChange={e => setQuickSupplierAddress(e.target.value)}
+                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-sm focus:outline-none focus:border-primary transition-colors text-ink placeholder-muted resize-none"
+                  placeholder="City, State or complete address"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-hairline flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={closeQuickSupplierModal}
+                  disabled={isSavingQuickSupplier}
+                  className="px-4 py-2 text-xs font-medium text-ink hover:bg-surface-soft rounded-lg transition-colors border border-hairline"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingQuickSupplier || !quickSupplierName.trim()}
+                  className="px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary-active text-on-primary rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {isSavingQuickSupplier && <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1" />}
+                  {isSavingQuickSupplier ? 'Saving...' : 'Save & Select'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

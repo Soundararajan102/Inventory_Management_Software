@@ -63,6 +63,14 @@ function Sidebar() {
       if (e.defaultPrevented) return;
 
       if (e.ctrlKey) {
+        if ((window as any).__isEditingActive) {
+          if (e.key === '9' || visibleMenuItems.some(i => i.shortcut.toLowerCase() === e.key.toLowerCase())) {
+            e.preventDefault();
+            alert("You are currently editing a bill or quotation. Press 'Esc' or click the (X) close button on the edit banner to exit edit mode before switching pages.");
+            return;
+          }
+        }
+
         if (e.key === '9') {
           e.preventDefault();
           if (location.pathname !== '/inventory') {
@@ -176,6 +184,13 @@ function Sidebar() {
             <Link
               key={item.name}
               to={item.path}
+              onClick={(e) => {
+                if ((window as any).__isEditingActive) {
+                  e.preventDefault();
+                  alert("You are currently editing a bill or quotation. Press 'Esc' or click the (X) close button on the edit banner to exit edit mode before switching pages.");
+                  return;
+                }
+              }}
               title={!isExpanded ? item.name : undefined}
               className={`group flex items-center justify-between py-3 mx-4 rounded-lg transition-all duration-200 ${isExpanded ? 'px-4' : 'px-0 justify-center'} ${isActive ? 'bg-primary text-on-primary font-medium' : 'hover:bg-surface-soft text-body font-medium'
                 }`}

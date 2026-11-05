@@ -4,6 +4,7 @@
   --font-sans: "Haas Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Haas Groot Disp", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-pricing: "Inter Display", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Inter", ui-sans-serif, system-ui, sans-serif;
 
   --color-primary: #2563eb;
   --color-primary-active: #1d4ed8;
@@ -47,6 +48,11 @@ body {
   font-family: var(--font-sans);
   background-color: var(--color-canvas);
   color: var(--color-body);
+}
+
+/* Ensure numerals render with normal unslashed zero */
+*, ::before, ::after {
+  font-feature-settings: "zero" 0;
 }
 
 @media print {

@@ -1,23 +1,62 @@
 import { useState, useEffect } from 'react';
-import { Database, Download, Upload, AlertTriangle, X, Trash2 } from 'lucide-react';
+import { 
+  Store, 
+  Receipt, 
+  Percent, 
+  Boxes, 
+  Users, 
+  Database, 
+  Sliders, 
+  Download, 
+  Upload, 
+  AlertTriangle, 
+  Trash2, 
+  X, 
+  Plus, 
+  Sparkles,
+  Building2,
+  Phone,
+  MapPin,
+  CreditCard,
+  Keyboard
+} from 'lucide-react';
 import { save, open, confirm } from '@tauri-apps/plugin-dialog';
 import { copyFile } from '@tauri-apps/plugin-fs';
 import { appDataDir, join } from '@tauri-apps/api/path';
 import * as OTPAuth from 'otpauth';
 import Staff from './Staff';
-import { wipeAllData } from '../lib/db';
+import { wipeAllData, getDb, formatCustomBillNumber, type BillYearFormat } from '../lib/db';
 
+type SettingsTab = 'shop' | 'billing' | 'taxes' | 'inventory' | 'staff' | 'backup' | 'interface';
+
+interface CategoryItem {
+  id: SettingsTab;
+  label: string;
+  desc: string;
+  icon: any;
+}
+
+const CATEGORIES: CategoryItem[] = [
+  { id: 'shop', label: 'Store & Branding', desc: 'Shop details, contact & GSTIN', icon: Store },
+  { id: 'billing', label: 'Bill & Invoicing', desc: 'Invoice format, prefix & counters', icon: Receipt },
+  { id: 'taxes', label: 'Taxes & GST', desc: 'Sales, purchase tax & profit rules', icon: Percent },
+  { id: 'inventory', label: 'Inventory & Units', desc: 'Stock alerts & unit measurements', icon: Boxes },
+  { id: 'staff', label: 'Staff Management', desc: 'Team accounts & cashier access', icon: Users },
+  { id: 'backup', label: 'Backup & Recovery', desc: 'Database export, restore & reset', icon: Database },
+  { id: 'interface', label: 'Interface & Shortcuts', desc: 'Navigation hints & hotkeys', icon: Sliders },
+];
 
 export default function Settings() {
+  const [activeTab, setActiveTab] = useState<SettingsTab>('shop');
   const [status, setStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   
+  // Wipe Modal State
   const [showWipeModal, setShowWipeModal] = useState(false);
   const [wipeCode, setWipeCode] = useState('');
   const [wipeError, setWipeError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'staff' | 'preferences' | 'backup'>('staff');
-  
+  // Shop Profile State
   const [shopName, setShopName] = useState(() => localStorage.getItem('shopName') || 'Electro Hub');
   const [shopAddress, setShopAddress] = useState(() => localStorage.getItem('shopAddress') || '123 Market Street, City');
   const [shopPhone, setShopPhone] = useState(() => localStorage.getItem('shopPhone') || '+91 9876543210');
@@ -30,53 +69,192 @@ export default function Settings() {
     window.dispatchEvent(new Event('preferencesUpdated'));
   };
 
-  const [hideShortcuts, setHideShortcuts] = useState(() => {
-    return localStorage.getItem('hideShortcuts') === 'true';
+  // Bill Format State
+  const [billPrefix, setBillPrefix] = useState(() => localStorage.getItem('billPrefix') ?? '');
+  const [billQuotationPrefix, setBillQuotationPrefix] = useState(() => localStorage.getItem('billQuotationPrefix') ?? 'QT');
+  const [billYearFormat, setBillYearFormat] = useState<BillYearFormat>(() => {
+    return (localStorage.getItem('billYearFormat') as BillYearFormat) || '2digit';
   });
+  const [billSeparator, setBillSeparator] = useState(() => localStorage.getItem('billSeparator') ?? '-');
+  const [billPadding, setBillPadding] = useState(() => Number(localStorage.getItem('billPadding') || 0));
+  const [billNextNumber, setBillNextNumber] = useState(() => localStorage.getItem('billNextNumber') ?? '');
+  const [maxSalesId, setMaxSalesId] = useState<number>(0);
+
+  useEffect(() => {
+    async function loadMaxId() {
+      try {
+        const db = await getDb();
+        const res = await db.select<{ max_id: number }[]>('SELECT MAX(id) as max_id FROM sales');
+        if (res && res.length > 0 && res[0].max_id) {
+          setMaxSalesId(res[0].max_id);
+        }
+      } catch (e) {
+        console.error('Failed to load max sales id:', e);
+      }
+    }
+    loadMaxId();
+  }, []);
+
+  const handleBillFormatChange = (key: string, val: any) => {
+    if (key === 'billPrefix') setBillPrefix(val);
+    if (key === 'billQuotationPrefix') setBillQuotationPrefix(val);
+    if (key === 'billYearFormat') setBillYearFormat(val);
+    if (key === 'billSeparator') setBillSeparator(val);
+    if (key === 'billPadding') setBillPadding(val);
+    if (key === 'billNextNumber') setBillNextNumber(val);
+
+    if (val === '' && (key === 'billNextNumber' || key === 'billPrefix')) {
+      if (key === 'billNextNumber') {
+        localStorage.removeItem(key);
+      } else {
+        localStorage.setItem(key, '');
+      }
+    } else {
+      localStorage.setItem(key, String(val));
+    }
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const applyPreset = (preset: 'gst' | 'shop' | 'counter' | 'default') => {
+    if (preset === 'gst') {
+      setBillPrefix('INV');
+      setBillQuotationPrefix('QT');
+      setBillYearFormat('fy_short');
+      setBillSeparator('/');
+      setBillPadding(4);
+      localStorage.setItem('billPrefix', 'INV');
+      localStorage.setItem('billQuotationPrefix', 'QT');
+      localStorage.setItem('billYearFormat', 'fy_short');
+      localStorage.setItem('billSeparator', '/');
+      localStorage.setItem('billPadding', '4');
+    } else if (preset === 'shop') {
+      setBillPrefix('EH');
+      setBillQuotationPrefix('QT');
+      setBillYearFormat('4digit');
+      setBillSeparator('-');
+      setBillPadding(3);
+      localStorage.setItem('billPrefix', 'EH');
+      localStorage.setItem('billQuotationPrefix', 'QT');
+      localStorage.setItem('billYearFormat', '4digit');
+      localStorage.setItem('billSeparator', '-');
+      localStorage.setItem('billPadding', '3');
+    } else if (preset === 'counter') {
+      setBillPrefix('INV');
+      setBillQuotationPrefix('QT');
+      setBillYearFormat('none');
+      setBillSeparator('-');
+      setBillPadding(4);
+      localStorage.setItem('billPrefix', 'INV');
+      localStorage.setItem('billQuotationPrefix', 'QT');
+      localStorage.setItem('billYearFormat', 'none');
+      localStorage.setItem('billSeparator', '-');
+      localStorage.setItem('billPadding', '4');
+    } else if (preset === 'default') {
+      setBillPrefix('');
+      setBillQuotationPrefix('QT');
+      setBillYearFormat('2digit');
+      setBillSeparator('-');
+      setBillPadding(0);
+      localStorage.setItem('billPrefix', '');
+      localStorage.setItem('billQuotationPrefix', 'QT');
+      localStorage.setItem('billYearFormat', '2digit');
+      localStorage.setItem('billSeparator', '-');
+      localStorage.setItem('billPadding', '0');
+    }
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const currentSeq = billNextNumber && !isNaN(Number(billNextNumber)) && Number(billNextNumber) > 0
+    ? Number(billNextNumber)
+    : (maxSalesId + 1);
+
+  const previewBillNo = formatCustomBillNumber(
+    billPrefix,
+    currentSeq,
+    billYearFormat,
+    billSeparator,
+    billPadding,
+    new Date()
+  );
+
+  const previewQuotationNo = formatCustomBillNumber(
+    billQuotationPrefix,
+    1,
+    billYearFormat,
+    billSeparator,
+    billPadding,
+    new Date()
+  );
+
+  // Tax Settings State
   const [enableSalesGST, setEnableSalesGST] = useState(() => {
     const val = localStorage.getItem('enableSalesGST');
     if (val !== null) return val !== 'false';
-    return localStorage.getItem('enableGST') !== 'false'; // fallback to legacy
+    return localStorage.getItem('enableGST') !== 'false';
   });
   const [salesTaxMethod, setSalesTaxMethod] = useState<'exclusive' | 'inclusive'>(() => {
     const val = localStorage.getItem('salesTaxMethod') as 'exclusive' | 'inclusive';
     if (val) return val;
-    return (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive'; // fallback to legacy
+    return (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive';
   });
 
   const [enablePurchaseGST, setEnablePurchaseGST] = useState(() => {
     const val = localStorage.getItem('enablePurchaseGST');
     if (val !== null) return val !== 'false';
-    return localStorage.getItem('enableGST') !== 'false'; // fallback to legacy
+    return localStorage.getItem('enableGST') !== 'false';
   });
   const [purchaseTaxMethod, setPurchaseTaxMethod] = useState<'exclusive' | 'inclusive'>(() => {
     const val = localStorage.getItem('purchaseTaxMethod') as 'exclusive' | 'inclusive';
     if (val) return val;
-    return (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive'; // fallback to legacy
+    return (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive';
   });
 
   const [profitTaxMode, setProfitTaxMode] = useState<'with_gst' | 'without_gst'>(() => {
     return (localStorage.getItem('profitTaxMode') as 'with_gst' | 'without_gst') || 'with_gst';
   });
-  
+
+  const toggleSalesGST = () => {
+    const newValue = !enableSalesGST;
+    setEnableSalesGST(newValue);
+    localStorage.setItem('enableSalesGST', newValue ? 'true' : 'false');
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const setSalesTaxMethodExplicit = (method: 'exclusive' | 'inclusive') => {
+    setSalesTaxMethod(method);
+    localStorage.setItem('salesTaxMethod', method);
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const togglePurchaseGST = () => {
+    const newValue = !enablePurchaseGST;
+    setEnablePurchaseGST(newValue);
+    localStorage.setItem('enablePurchaseGST', newValue ? 'true' : 'false');
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const setPurchaseTaxMethodExplicit = (method: 'exclusive' | 'inclusive') => {
+    setPurchaseTaxMethod(method);
+    localStorage.setItem('purchaseTaxMethod', method);
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  const toggleProfitTaxMode = (mode: 'with_gst' | 'without_gst') => {
+    setProfitTaxMode(mode);
+    localStorage.setItem('profitTaxMode', mode);
+    window.dispatchEvent(new Event('preferencesUpdated'));
+  };
+
+  // Inventory & Stock State
   const [lowStockThreshold, setLowStockThreshold] = useState(() => {
     return localStorage.getItem('lowStockThreshold') || '10';
   });
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowWipeModal(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   const handleLowStockChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '');
     setLowStockThreshold(val);
     localStorage.setItem('lowStockThreshold', val || '0');
+    window.dispatchEvent(new Event('preferencesUpdated'));
   };
 
   const [customUnits, setCustomUnits] = useState<string[]>(() => {
@@ -110,6 +288,11 @@ export default function Settings() {
     }
   };
 
+  // Interface State
+  const [hideShortcuts, setHideShortcuts] = useState(() => {
+    return localStorage.getItem('hideShortcuts') === 'true';
+  });
+
   const toggleShortcuts = () => {
     const newValue = !hideShortcuts;
     setHideShortcuts(newValue);
@@ -121,40 +304,19 @@ export default function Settings() {
     window.dispatchEvent(new Event('preferencesUpdated'));
   };
 
-  const toggleSalesGST = () => {
-    const newValue = !enableSalesGST;
-    setEnableSalesGST(newValue);
-    localStorage.setItem('enableSalesGST', newValue ? 'true' : 'false');
-    window.dispatchEvent(new Event('preferencesUpdated'));
-  };
+  // Escape key handler for modals
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowWipeModal(false);
+        setShowUnitModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
-  const toggleSalesTaxMethod = () => {
-    const newMethod = salesTaxMethod === 'exclusive' ? 'inclusive' : 'exclusive';
-    setSalesTaxMethod(newMethod);
-    localStorage.setItem('salesTaxMethod', newMethod);
-    window.dispatchEvent(new Event('preferencesUpdated'));
-  };
-
-  const togglePurchaseGST = () => {
-    const newValue = !enablePurchaseGST;
-    setEnablePurchaseGST(newValue);
-    localStorage.setItem('enablePurchaseGST', newValue ? 'true' : 'false');
-    window.dispatchEvent(new Event('preferencesUpdated'));
-  };
-
-  const togglePurchaseTaxMethod = () => {
-    const newMethod = purchaseTaxMethod === 'exclusive' ? 'inclusive' : 'exclusive';
-    setPurchaseTaxMethod(newMethod);
-    localStorage.setItem('purchaseTaxMethod', newMethod);
-    window.dispatchEvent(new Event('preferencesUpdated'));
-  };
-
-  const toggleProfitTaxMode = (mode: 'with_gst' | 'without_gst') => {
-    setProfitTaxMode(mode);
-    localStorage.setItem('profitTaxMode', mode);
-    window.dispatchEvent(new Event('preferencesUpdated'));
-  };
-
+  // Backup & Restore
   const handleBackup = async () => {
     try {
       setIsLoading(true);
@@ -165,7 +327,7 @@ export default function Settings() {
           name: 'SQLite Database',
           extensions: ['db']
         }],
-        defaultPath: 'inventory_backup.db'
+        defaultPath: `inventory_backup_${new Date().toISOString().split('T')[0]}.db`
       });
 
       if (!savePath) {
@@ -173,7 +335,6 @@ export default function Settings() {
         return;
       }
 
-      // We need to copy from appDataDir/inventory.db to the chosen savePath.
       const appDataDirPath = await appDataDir();
       const sourcePath = await join(appDataDirPath, 'inventory.db');
 
@@ -190,9 +351,12 @@ export default function Settings() {
   };
 
   const handleRestore = async () => {
-    if (!confirm('WARNING: Restoring a backup will overwrite all current data. This action cannot be undone. Do you wish to continue?')) {
-      return;
-    }
+    const isConfirmed = await confirm('WARNING: Restoring a backup will overwrite all current database data. This action cannot be undone. Do you wish to continue?', {
+      title: 'Confirm Database Restore',
+      kind: 'warning'
+    });
+
+    if (!isConfirmed) return;
 
     try {
       setIsLoading(true);
@@ -214,15 +378,13 @@ export default function Settings() {
       const appDataDirPath = await appDataDir();
       const destPath = await join(appDataDirPath, 'inventory.db');
 
-      // Copy the selected backup file over the current database
       await copyFile(openPath as string, destPath);
 
-      setStatus({ type: 'success', message: 'Database successfully restored! Please restart the application to apply changes.' });
+      setStatus({ type: 'success', message: 'Database successfully restored! Reloading application...' });
       
-      // Optionally, we could force reload the window to re-init the DB
       setTimeout(() => {
         window.location.reload();
-      }, 3000);
+      }, 2500);
 
     } catch (e: any) {
       console.error(e);
@@ -286,129 +448,393 @@ export default function Settings() {
 
   return (
     <div className="flex flex-col h-full bg-canvas">
-      <div className="p-8 pb-4 shrink-0">
-        <h1 className="text-4xl font-display font-medium text-ink tracking-tight">Settings</h1>
-        <p className="text-base text-body mt-2">Manage your app preferences, staff, and database backups.</p>
-      </div>
-
-      <div className="px-8 border-b border-hairline shrink-0">
-        <div className="flex gap-6">
-          <button
-            onClick={() => setActiveTab('staff')}
-            className={`pb-4 font-medium text-sm transition-colors border-b-2 ${
-              activeTab === 'staff' ? 'text-primary border-primary' : 'text-muted hover:text-ink border-transparent'
-            }`}
-          >
-            Staff Management
-          </button>
-          <button
-            onClick={() => setActiveTab('preferences')}
-            className={`pb-4 font-medium text-sm transition-colors border-b-2 ${
-              activeTab === 'preferences' ? 'text-primary border-primary' : 'text-muted hover:text-ink border-transparent'
-            }`}
-          >
-            Preferences
-          </button>
-          <button
-            onClick={() => setActiveTab('backup')}
-            className={`pb-4 font-medium text-sm transition-colors border-b-2 ${
-              activeTab === 'backup' ? 'text-primary border-primary' : 'text-muted hover:text-ink border-transparent'
-            }`}
-          >
-            Backup & Restore
-          </button>
+      
+      {/* Top Header */}
+      <div className="p-6 md:p-8 pb-4 shrink-0 border-b border-hairline bg-canvas">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-display font-medium text-ink tracking-tight">Settings</h1>
+            <p className="text-sm md:text-base text-body mt-1">Configure your store preferences, tax rules, billing formats, and data security.</p>
+          </div>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-surface-soft border border-hairline rounded-lg text-xs font-semibold text-ink self-start sm:self-auto shadow-sm">
+            <Building2 className="w-3.5 h-3.5 text-primary" />
+            <span className="font-mono">{shopName || 'Electro Hub'}</span>
+            {shopGSTIN && (
+              <span className="px-1.5 py-0.5 text-[10px] bg-primary/10 text-primary font-mono rounded">
+                GSTIN: {shopGSTIN}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {activeTab === 'staff' && (
-          <div className="h-full">
-            <Staff />
+      {/* Main Settings Body: Two-Column Responsive Layout */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden bg-canvas">
+        
+        {/* Left Category Rail */}
+        <div className="w-full md:w-72 md:shrink-0 border-b md:border-b-0 md:border-r border-hairline bg-surface-soft/40 p-3 md:p-4 overflow-x-auto md:overflow-y-auto">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-muted px-3 mb-2 hidden md:block">
+            Settings Navigation
           </div>
-        )}
+          <div className="flex md:flex-col gap-1.5">
+            {CATEGORIES.map(cat => {
+              const Icon = cat.icon;
+              const isActive = activeTab === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setActiveTab(cat.id)}
+                  className={`flex items-center md:items-start gap-3 p-2.5 md:p-3 rounded-xl text-left transition-all whitespace-nowrap md:whitespace-normal shrink-0 md:shrink md:w-full ${
+                    isActive
+                      ? 'bg-canvas text-ink font-semibold shadow-sm border border-hairline ring-1 ring-primary/20'
+                      : 'text-muted hover:text-ink hover:bg-canvas/60 border border-transparent'
+                  }`}
+                >
+                  <div className={`p-2 rounded-lg shrink-0 transition-colors ${
+                    isActive ? 'bg-primary text-white shadow-sm' : 'bg-surface-soft text-muted'
+                  }`}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0 pr-1">
+                    <div className="text-xs md:text-sm font-bold truncate">{cat.label}</div>
+                    <div className="text-[11px] text-muted line-clamp-1 hidden md:block mt-0.5">{cat.desc}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-        {activeTab === 'preferences' && (
-          <div className="p-8 max-w-4xl space-y-8">
-            
-            {/* Shop Details Section */}
-            <section>
-              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">Shop Details (For Invoice)</h3>
-              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-bold text-ink mb-2">Shop Name</label>
-                    <input 
-                      type="text" 
-                      value={shopName} 
-                      onChange={e => updateShopDetail('shopName', e.target.value, setShopName)}
-                      className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-ink transition-colors text-ink font-medium"
-                      placeholder="Electro Hub"
-                    />
+        {/* Right Active Content Pane */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-4xl mx-auto space-y-6">
+
+            {/* TAB 1: STORE & BRANDING */}
+            {activeTab === 'shop' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="border-b border-hairline pb-4">
+                  <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                    <Store className="w-5 h-5 text-primary" />
+                    Store Details & Invoice Branding
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    These store details appear directly on all customer bills, quotations, and thermal receipts.
+                  </p>
+                </div>
+
+                {/* Form Fields */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden p-6 space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-primary" /> Shop / Business Name *
+                      </label>
+                      <input 
+                        type="text" 
+                        value={shopName} 
+                        onChange={e => updateShopDetail('shopName', e.target.value, setShopName)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm"
+                        placeholder="e.g. Electro Hub"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1.5">
+                        <Phone className="w-3.5 h-3.5 text-primary" /> Support / Contact Phone *
+                      </label>
+                      <input 
+                        type="text" 
+                        value={shopPhone} 
+                        onChange={e => updateShopDetail('shopPhone', e.target.value, setShopPhone)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm"
+                        placeholder="+91 9876543210"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-primary" /> Full Store Address
+                      </label>
+                      <input 
+                        type="text" 
+                        value={shopAddress} 
+                        onChange={e => updateShopDetail('shopAddress', e.target.value, setShopAddress)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm"
+                        placeholder="123 Market Street, City, State - PIN"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1.5">
+                        <CreditCard className="w-3.5 h-3.5 text-primary" /> GSTIN / Tax Identification
+                      </label>
+                      <input 
+                        type="text" 
+                        value={shopGSTIN} 
+                        onChange={e => updateShopDetail('shopGSTIN', e.target.value.toUpperCase(), setShopGSTIN)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-mono font-medium text-sm uppercase"
+                        placeholder="27XXXXX1234X1X1"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-bold text-ink mb-2">Phone Number</label>
-                    <input 
-                      type="text" 
-                      value={shopPhone} 
-                      onChange={e => updateShopDetail('shopPhone', e.target.value, setShopPhone)}
-                      className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-ink transition-colors text-ink font-medium"
-                      placeholder="+91 9876543210"
-                    />
+                </div>
+
+                {/* Live Invoice Header Preview */}
+                <div className="bg-surface-soft/80 border border-hairline rounded-xl p-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Printed Receipt Header Preview
+                    </span>
+                    <span className="text-[11px] text-muted">Auto-formats on all bills</span>
                   </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-bold text-ink mb-2">Shop Address</label>
-                    <input 
-                      type="text" 
-                      value={shopAddress} 
-                      onChange={e => updateShopDetail('shopAddress', e.target.value, setShopAddress)}
-                      className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-ink transition-colors text-ink font-medium"
-                      placeholder="123 Market Street, City"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-bold text-ink mb-2">GSTIN</label>
-                    <input 
-                      type="text" 
-                      value={shopGSTIN} 
-                      onChange={e => updateShopDetail('shopGSTIN', e.target.value.toUpperCase(), setShopGSTIN)}
-                      className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-ink transition-colors text-ink font-medium uppercase"
-                      placeholder="27XXXXX1234X1X1"
-                    />
+                  <div className="bg-canvas border border-hairline rounded-lg p-5 text-center max-w-md mx-auto shadow-sm space-y-1 font-sans">
+                    <div className="text-lg font-bold text-ink tracking-tight uppercase">{shopName || 'STORE NAME'}</div>
+                    <div className="text-xs text-muted">{shopAddress || 'Store Address'}</div>
+                    <div className="text-xs text-muted flex items-center justify-center gap-3 pt-1">
+                      <span>Ph: {shopPhone || 'N/A'}</span>
+                      {shopGSTIN && <span>• GSTIN: <strong className="font-mono text-ink">{shopGSTIN}</strong></span>}
+                    </div>
                   </div>
                 </div>
               </div>
-            </section>
+            )}
 
-            {/* User Interface Section */}
-            <section>
-              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">User Interface</h3>
-              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-                <div className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-ink">Keyboard Shortcuts in Sidebar</p>
-                      <p className="text-sm text-muted">Show the shortcut hints (^1, ^2) next to menu items</p>
+            {/* TAB 2: BILL & INVOICE FORMATTING */}
+            {activeTab === 'billing' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="border-b border-hairline pb-4">
+                  <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                    <Receipt className="w-5 h-5 text-primary" />
+                    Bill & Invoice Number Format
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    Customize invoice numbering, prefixes, financial years, separators, and sequence counters.
+                  </p>
+                </div>
+
+                {/* Real-time Preview Banner */}
+                <div className="bg-surface-soft border border-hairline rounded-xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-5 shadow-sm">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-muted">Next Bill Preview</span>
+                      <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 rounded-full border border-emerald-200 dark:border-emerald-800">
+                        Live Sample
+                      </span>
                     </div>
+                    <div className="text-2xl sm:text-3xl font-mono font-bold text-ink mt-1 tracking-wide">
+                      {previewBillNo}
+                    </div>
+                    <p className="text-xs text-muted mt-1">Will be assigned to the next sale recorded in POS</p>
+                  </div>
+
+                  <div className="sm:border-l sm:border-hairline sm:pl-6">
+                    <div className="text-xs font-bold uppercase tracking-wider text-muted">Next Quotation Preview</div>
+                    <div className="text-xl font-mono font-bold text-ink mt-1 tracking-wide">
+                      {previewQuotationNo}
+                    </div>
+                    <p className="text-xs text-muted mt-1">Assigned to the next quotation</p>
+                  </div>
+                </div>
+
+                {/* Quick Format Presets */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-muted mb-3">
+                    1-Click Format Presets
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <button
-                      onClick={toggleShortcuts}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${!hideShortcuts ? 'bg-primary' : 'bg-surface-strong'}`}
+                      type="button"
+                      onClick={() => applyPreset('gst')}
+                      className={`p-3.5 rounded-xl border text-left transition-all ${
+                        billPrefix === 'INV' && billYearFormat === 'fy_short' && billSeparator === '/' && billPadding === 4
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-hairline bg-surface-soft hover:bg-canvas'
+                      }`}
                     >
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-canvas transition-transform ${!hideShortcuts ? 'translate-x-6' : 'translate-x-1'}`} />
+                      <div className="font-bold text-xs text-ink">Standard GST</div>
+                      <div className="text-xs font-mono text-primary mt-1 font-semibold">INV/26-27/0001</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('shop')}
+                      className={`p-3.5 rounded-xl border text-left transition-all ${
+                        billPrefix === 'EH' && billYearFormat === '4digit' && billSeparator === '-' && billPadding === 3
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-hairline bg-surface-soft hover:bg-canvas'
+                      }`}
+                    >
+                      <div className="font-bold text-xs text-ink">Shop Code</div>
+                      <div className="text-xs font-mono text-primary mt-1 font-semibold">EH-2026-001</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('counter')}
+                      className={`p-3.5 rounded-xl border text-left transition-all ${
+                        billPrefix === 'INV' && billYearFormat === 'none' && billSeparator === '-' && billPadding === 4
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-hairline bg-surface-soft hover:bg-canvas'
+                      }`}
+                    >
+                      <div className="font-bold text-xs text-ink">Simple Counter</div>
+                      <div className="text-xs font-mono text-primary mt-1 font-semibold">INV-0001</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('default')}
+                      className={`p-3.5 rounded-xl border text-left transition-all ${
+                        billPrefix === '' && billYearFormat === '2digit' && billSeparator === '-' && billPadding === 0
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-hairline bg-surface-soft hover:bg-canvas'
+                      }`}
+                    >
+                      <div className="font-bold text-xs text-ink">Default Compact</div>
+                      <div className="text-xs font-mono text-primary mt-1 font-semibold">26-1</div>
                     </button>
                   </div>
+
+                  {/* Individual Controls */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6 mt-6 border-t border-hairline">
+                    <div>
+                      <label className="block text-sm font-bold text-ink mb-1">Bill / Invoice Prefix</label>
+                      <p className="text-xs text-muted mb-2">Text placed before the bill number (leave blank for none)</p>
+                      <input
+                        type="text"
+                        value={billPrefix}
+                        onChange={e => handleBillFormatChange('billPrefix', e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm"
+                        placeholder="e.g. INV, BILL, EH, or blank"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-ink mb-1">Quotation Prefix</label>
+                      <p className="text-xs text-muted mb-2">Prefix used for quotations and estimates</p>
+                      <input
+                        type="text"
+                        value={billQuotationPrefix}
+                        onChange={e => handleBillFormatChange('billQuotationPrefix', e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm"
+                        placeholder="e.g. QT, QUOT, EST"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-ink mb-1">Year / Date Component</label>
+                      <p className="text-xs text-muted mb-2">How the year or financial year appears</p>
+                      <select
+                        value={billYearFormat}
+                        onChange={e => handleBillFormatChange('billYearFormat', e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm cursor-pointer"
+                      >
+                        <option value="2digit">2-Digit Year (e.g. 26)</option>
+                        <option value="4digit">4-Digit Year (e.g. 2026)</option>
+                        <option value="fy_short">Financial Year Short (e.g. 26-27)</option>
+                        <option value="fy_long">Financial Year Full (e.g. 2026-27)</option>
+                        <option value="none">None (No Year)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-ink mb-1">Separator</label>
+                      <p className="text-xs text-muted mb-2">Character separating prefix, year, and number</p>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { label: 'Hyphen ( - )', val: '-' },
+                          { label: 'Slash ( / )', val: '/' },
+                          { label: 'Dot ( . )', val: '.' },
+                          { label: 'None', val: '' }
+                        ].map(sep => (
+                          <button
+                            key={sep.val}
+                            type="button"
+                            onClick={() => handleBillFormatChange('billSeparator', sep.val)}
+                            className={`py-2 px-2 text-xs font-bold rounded-lg border text-center transition-colors ${
+                              billSeparator === sep.val
+                                ? 'bg-primary text-white border-primary shadow-sm'
+                                : 'bg-surface-soft text-ink border-hairline hover:bg-canvas'
+                            }`}
+                          >
+                            {sep.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-ink mb-1">Number Padding (Leading Zeros)</label>
+                      <p className="text-xs text-muted mb-2">Length of sequence digits with leading zeros</p>
+                      <select
+                        value={billPadding}
+                        onChange={e => handleBillFormatChange('billPadding', Number(e.target.value))}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-medium text-sm cursor-pointer"
+                      >
+                        <option value={0}>No Padding (1, 2, 3...)</option>
+                        <option value={2}>2 Digits (01, 02...)</option>
+                        <option value={3}>3 Digits (001, 002...)</option>
+                        <option value={4}>4 Digits (0001, 0002...)</option>
+                        <option value={5}>5 Digits (00001, 00002...)</option>
+                        <option value={6}>6 Digits (000001, 000002...)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-ink mb-1">Next Bill Number (Counter)</label>
+                      <p className="text-xs text-muted mb-2">
+                        {maxSalesId > 0
+                          ? `Auto tracks database ID (next auto: #${maxSalesId + 1}). Enter number to override.`
+                          : 'Auto tracks database ID. Enter number to start custom sequence.'}
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={billNextNumber}
+                          onChange={e => {
+                            const clean = e.target.value.replace(/\D/g, '');
+                            handleBillFormatChange('billNextNumber', clean);
+                          }}
+                          className="flex-1 px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink font-mono font-medium text-sm"
+                          placeholder={`Auto (${maxSalesId + 1})`}
+                        />
+                        {billNextNumber && (
+                          <button
+                            type="button"
+                            onClick={() => handleBillFormatChange('billNextNumber', '')}
+                            className="px-3.5 py-2.5 text-xs font-semibold bg-surface-soft hover:bg-canvas border border-hairline rounded-lg text-muted hover:text-ink transition-colors whitespace-nowrap"
+                            title="Reset to automatic database ID counter"
+                          >
+                            Reset to Auto
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </section>
+            )}
 
-            {/* Sales Tax Section */}
-            <section>
-              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">Sales / Billing Tax</h3>
-              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-                <div className="p-6 space-y-6">
+            {/* TAB 3: TAXES & GST */}
+            {activeTab === 'taxes' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="border-b border-hairline pb-4">
+                  <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                    <Percent className="w-5 h-5 text-primary" />
+                    Taxation, GST & Profit Calculation
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    Control how taxes are calculated across sales, supplier purchases, and financial margins.
+                  </p>
+                </div>
+
+                {/* Sales Tax Card */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 space-y-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-bold text-ink">Enable GST for Sales</p>
-                      <p className="text-sm text-muted">Include GST in customer bills and print on receipts</p>
+                      <h3 className="text-base font-bold text-ink">Enable GST for Sales</h3>
+                      <p className="text-sm text-muted">Include GST in customer invoices, item lines, and print receipts</p>
                     </div>
                     <button
                       onClick={toggleSalesGST}
@@ -419,36 +845,55 @@ export default function Settings() {
                   </div>
 
                   {enableSalesGST && (
-                    <div className="flex items-center justify-between pt-6 border-t border-hairline">
-                      <div>
-                        <p className="font-bold text-ink">Sales Tax Method</p>
-                        <p className="text-sm text-muted">
-                          {salesTaxMethod === 'exclusive' 
-                            ? 'Exclusive: Tax is added on top of the selling price' 
-                            : 'Inclusive: Selling price already includes the tax'}
-                        </p>
+                    <div className="pt-6 border-t border-hairline space-y-3">
+                      <label className="block text-sm font-bold text-ink">Sales Tax Calculation Method</label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setSalesTaxMethodExplicit('exclusive')}
+                          className={`p-4 rounded-xl border text-left transition-all ${
+                            salesTaxMethod === 'exclusive'
+                              ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                              : 'border-hairline bg-surface-soft hover:bg-canvas'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-ink">Exclusive (Tax Added)</span>
+                            {salesTaxMethod === 'exclusive' && <span className="w-2 h-2 rounded-full bg-primary" />}
+                          </div>
+                          <p className="text-xs text-muted mt-1">
+                            GST is calculated on top of the selling price (Price + Tax). Recommended for B2B & Wholesale.
+                          </p>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSalesTaxMethodExplicit('inclusive')}
+                          className={`p-4 rounded-xl border text-left transition-all ${
+                            salesTaxMethod === 'inclusive'
+                              ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                              : 'border-hairline bg-surface-soft hover:bg-canvas'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-ink">Inclusive (Tax Embedded)</span>
+                            {salesTaxMethod === 'inclusive' && <span className="w-2 h-2 rounded-full bg-primary" />}
+                          </div>
+                          <p className="text-xs text-muted mt-1">
+                            Selling price already includes tax (MRP style). Recommended for retail customer walk-ins.
+                          </p>
+                        </button>
                       </div>
-                      <button
-                        onClick={toggleSalesTaxMethod}
-                        className={`relative inline-flex h-8 w-32 items-center justify-center rounded-md border border-hairline transition-colors ${salesTaxMethod === 'inclusive' ? 'bg-primary text-white border-primary' : 'bg-surface-soft text-ink hover:bg-canvas'}`}
-                      >
-                        <span className="text-xs font-bold uppercase">{salesTaxMethod}</span>
-                      </button>
                     </div>
                   )}
                 </div>
-              </div>
-            </section>
 
-            {/* Purchase Tax Section */}
-            <section>
-              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">Purchase Tax</h3>
-              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-                <div className="p-6 space-y-6">
+                {/* Purchase Tax Card */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 space-y-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-bold text-ink">Enable GST for Purchases</p>
-                      <p className="text-sm text-muted">Include GST when bringing in new inventory</p>
+                      <h3 className="text-base font-bold text-ink">Enable GST for Purchases</h3>
+                      <p className="text-sm text-muted">Include GST breakdown when adding supplier stock into inventory</p>
                     </div>
                     <button
                       onClick={togglePurchaseGST}
@@ -459,187 +904,365 @@ export default function Settings() {
                   </div>
 
                   {enablePurchaseGST && (
-                    <div className="flex items-center justify-between pt-6 border-t border-hairline">
-                      <div>
-                        <p className="font-bold text-ink">Purchase Tax Method</p>
-                        <p className="text-sm text-muted">
-                          {purchaseTaxMethod === 'exclusive' 
-                            ? 'Exclusive: Tax is added on top of the purchase price' 
-                            : 'Inclusive: Purchase price already includes the tax'}
-                        </p>
+                    <div className="pt-6 border-t border-hairline space-y-3">
+                      <label className="block text-sm font-bold text-ink">Purchase Tax Calculation Method</label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setPurchaseTaxMethodExplicit('exclusive')}
+                          className={`p-4 rounded-xl border text-left transition-all ${
+                            purchaseTaxMethod === 'exclusive'
+                              ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                              : 'border-hairline bg-surface-soft hover:bg-canvas'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-ink">Exclusive (Tax on Cost)</span>
+                            {purchaseTaxMethod === 'exclusive' && <span className="w-2 h-2 rounded-full bg-primary" />}
+                          </div>
+                          <p className="text-xs text-muted mt-1">
+                            Tax is added on top of the supplier base unit purchase cost.
+                          </p>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPurchaseTaxMethodExplicit('inclusive')}
+                          className={`p-4 rounded-xl border text-left transition-all ${
+                            purchaseTaxMethod === 'inclusive'
+                              ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                              : 'border-hairline bg-surface-soft hover:bg-canvas'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-sm text-ink">Inclusive (All-in Cost)</span>
+                            {purchaseTaxMethod === 'inclusive' && <span className="w-2 h-2 rounded-full bg-primary" />}
+                          </div>
+                          <p className="text-xs text-muted mt-1">
+                            Purchase price already includes supplier taxes.
+                          </p>
+                        </button>
                       </div>
-                      <button
-                        onClick={togglePurchaseTaxMethod}
-                        className={`relative inline-flex h-8 w-32 items-center justify-center rounded-md border border-hairline transition-colors ${purchaseTaxMethod === 'inclusive' ? 'bg-primary text-white border-primary' : 'bg-surface-soft text-ink hover:bg-canvas'}`}
-                      >
-                        <span className="text-xs font-bold uppercase">{purchaseTaxMethod}</span>
-                      </button>
                     </div>
                   )}
                 </div>
-              </div>
-            </section>
 
-            {/* Profit Calculation Mode */}
-            <section>
-              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">Profit Calculation</h3>
-              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-                <div className="p-6 space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <p className="font-bold text-ink">Net Profit Calculation Mode</p>
-                      <p className="text-sm text-muted">
-                        {profitTaxMode === 'with_gst' 
-                          ? 'With GST: Full customer bill amount minus purchase cost' 
-                          : 'Without GST: Base selling price minus purchase cost, excluding GST'}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 p-1 bg-surface-soft border border-hairline rounded-lg shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => toggleProfitTaxMode('with_gst')}
-                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${profitTaxMode === 'with_gst' ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-ink'}`}
-                      >
-                        With GST
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleProfitTaxMode('without_gst')}
-                        className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${profitTaxMode === 'without_gst' ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-ink'}`}
-                      >
-                        Without GST
-                      </button>
-                    </div>
+                {/* Profit Calculation Mode Card */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 space-y-4">
+                  <div>
+                    <h3 className="text-base font-bold text-ink">Net Margin & Profit Reporting Mode</h3>
+                    <p className="text-sm text-muted">Choose how Day Book and Dashboard calculate gross profit on products sold</p>
                   </div>
-                </div>
-              </div>
-            </section>
 
-            {/* Inventory Section */}
-            <section>
-              <h3 className="text-sm font-bold text-ink uppercase tracking-wider mb-4">Inventory</h3>
-              <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-                <div className="p-6 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1 pr-4">
-                      <p className="font-bold text-ink">Low Stock Alert Threshold</p>
-                      <p className="text-sm text-muted">Items with quantity below this number will be flagged on the dashboard</p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <input 
-                        type="text" 
-                        value={lowStockThreshold} 
-                        onChange={handleLowStockChange}
-                        className="w-16 px-3 py-1.5 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-ink transition-colors text-ink text-center font-medium"
-                      />
-                      <span className="text-sm text-muted">items</span>
-                    </div>
-                  </div>
-                  
-                  <div className="pt-6 border-t border-hairline flex items-center justify-between">
-                    <div>
-                      <h3 className="text-md font-bold text-ink">Custom Unit Types</h3>
-                      <p className="text-sm text-muted">Manage the units used for inventory items (e.g., Kg, Box, Pack)</p>
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                     <button
-                      onClick={() => setShowUnitModal(true)}
-                      className="px-4 py-2 bg-surface-soft border border-hairline hover:bg-canvas rounded-md font-medium text-sm transition-colors text-ink"
+                      type="button"
+                      onClick={() => toggleProfitTaxMode('with_gst')}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        profitTaxMode === 'with_gst'
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-hairline bg-surface-soft hover:bg-canvas'
+                      }`}
                     >
-                      Manage Units
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sm text-ink">Gross Turnover Mode (With GST)</span>
+                        {profitTaxMode === 'with_gst' && <span className="w-2 h-2 rounded-full bg-primary" />}
+                      </div>
+                      <p className="text-xs text-muted mt-1">
+                        Margin = Full customer bill amount minus purchase price. Useful for cash-flow accounting.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleProfitTaxMode('without_gst')}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        profitTaxMode === 'without_gst'
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                          : 'border-hairline bg-surface-soft hover:bg-canvas'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-sm text-ink">Real Margin Mode (Without GST)</span>
+                        {profitTaxMode === 'without_gst' && <span className="w-2 h-2 rounded-full bg-primary" />}
+                      </div>
+                      <p className="text-xs text-muted mt-1">
+                        Margin = Taxable base selling price minus purchase price. Excludes GST liability.
+                      </p>
                     </button>
                   </div>
                 </div>
               </div>
-            </section>
-          </div>
-        )}
+            )}
 
-        {activeTab === 'backup' && (
-          <div className="p-8 max-w-3xl">
-            <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
-              <div className="p-6 border-b border-hairline bg-surface-soft flex items-center gap-3">
-                <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                  <Database className="w-5 h-5 text-primary" />
+            {/* TAB 4: INVENTORY & STOCK */}
+            {activeTab === 'inventory' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="border-b border-hairline pb-4">
+                  <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                    <Boxes className="w-5 h-5 text-primary" />
+                    Inventory, Stock Alerts & Units
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    Manage re-order alert thresholds and customizable item measurement units.
+                  </p>
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold text-ink">Data Backup & Restore</h2>
-                  <p className="text-sm text-muted">Secure your data or restore from a previous backup</p>
+
+                {/* Low Stock Threshold Card */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-base font-bold text-ink">Low Stock Alert Threshold</h3>
+                      <p className="text-sm text-muted mt-0.5">
+                        Items with total remaining quantity at or below this value will trigger amber alert badges on the Dashboard.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+                      <input 
+                        type="text" 
+                        value={lowStockThreshold} 
+                        onChange={handleLowStockChange}
+                        className="w-20 px-3.5 py-2 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink text-center font-mono font-bold text-base"
+                      />
+                      <span className="text-sm font-semibold text-muted">units</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Custom Units Card */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-ink">Custom Units of Measurement</h3>
+                      <p className="text-sm text-muted mt-0.5">Define measurement units selectable when adding or editing products</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowUnitModal(true)}
+                      className="px-3.5 py-1.5 text-xs font-semibold bg-surface-soft hover:bg-canvas border border-hairline rounded-lg text-ink transition-colors"
+                    >
+                      Open Modal
+                    </button>
+                  </div>
+
+                  {/* Inline Add Input */}
+                  <div className="flex gap-2.5 pt-2">
+                    <input 
+                      type="text" 
+                      value={newUnit} 
+                      onChange={e => setNewUnit(e.target.value)} 
+                      placeholder="e.g. Kg, Bundle, Roll, Pack" 
+                      className="flex-1 px-3.5 py-2 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink text-sm font-medium"
+                      onKeyDown={e => e.key === 'Enter' && addUnit()}
+                    />
+                    <button 
+                      type="button"
+                      onClick={addUnit}
+                      disabled={!newUnit.trim()}
+                      className="px-4 py-2 bg-primary hover:bg-primary-active text-on-primary rounded-lg font-semibold text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Unit
+                    </button>
+                  </div>
+
+                  {/* Active Unit Chips */}
+                  <div className="pt-2">
+                    {customUnits.length === 0 ? (
+                      <p className="text-xs text-muted italic">No custom units defined yet.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {customUnits.map(unit => (
+                          <div 
+                            key={unit} 
+                            className="inline-flex items-center gap-2 bg-surface-soft border border-hairline px-3.5 py-1.5 rounded-full shadow-sm text-sm font-medium text-ink group"
+                          >
+                            <span>{unit}</span>
+                            <button 
+                              type="button"
+                              onClick={() => removeUnit(unit)} 
+                              className="text-muted hover:text-signature-coral transition-colors p-0.5 rounded-full hover:bg-signature-coral/10" 
+                              title={`Delete ${unit}`}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
+            )}
 
-              <div className="p-8">
+            {/* TAB 5: STAFF MANAGEMENT */}
+            {activeTab === 'staff' && (
+              <div className="space-y-4 animate-in fade-in duration-150">
+                <Staff />
+              </div>
+            )}
+
+            {/* TAB 6: BACKUP & DATA RECOVERY */}
+            {activeTab === 'backup' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="border-b border-hairline pb-4">
+                  <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                    <Database className="w-5 h-5 text-primary" />
+                    Database Backup & Recovery
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    Export your database to external drives, restore past backups, or manage system resets.
+                  </p>
+                </div>
+
                 {status && (
-                  <div className={`mb-8 p-4 rounded-xl border flex items-start ${
+                  <div className={`p-4 rounded-xl border flex items-start gap-3 ${
                     status.type === 'success' ? 'bg-success/10 border-success/30 text-success' : 'bg-signature-coral/10 border-signature-coral/30 text-signature-coral'
                   }`}>
-                    {status.type === 'error' && <AlertTriangle className="w-5 h-5 mr-3 shrink-0 mt-0.5" />}
-                    <p className="font-medium">{status.message}</p>
+                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                    <p className="font-medium text-sm">{status.message}</p>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Backup & Restore Action Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <button
                     onClick={handleBackup}
                     disabled={isLoading}
-                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-primary rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-primary rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 text-left"
                   >
-                    <div className="w-12 h-12 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                      <Download className="w-6 h-6" />
+                    <div className="w-14 h-14 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                      <Download className="w-7 h-7" />
                     </div>
-                    <h2 className="text-lg font-bold text-ink">Create Backup</h2>
-                    <p className="text-sm text-muted text-center mt-2">Save a copy of your database to an external drive</p>
+                    <h3 className="text-lg font-bold text-ink">Create Database Backup</h3>
+                    <p className="text-xs text-muted text-center mt-2 max-w-xs">
+                      Export a full snapshot of all products, sales, customers, and ledger records to an external USB or cloud drive.
+                    </p>
                   </button>
 
                   <button
                     onClick={handleRestore}
                     disabled={isLoading}
-                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-signature-coral rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-amber-500 rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 text-left"
                   >
-                    <div className="w-12 h-12 bg-signature-coral/10 text-signature-coral rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                      <Upload className="w-6 h-6" />
+                    <div className="w-14 h-14 bg-amber-500/10 text-amber-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                      <Upload className="w-7 h-7" />
                     </div>
-                    <h2 className="text-lg font-bold text-ink">Restore Data</h2>
-                    <p className="text-sm text-muted text-center mt-2">Replace current data with a previous backup file</p>
+                    <h3 className="text-lg font-bold text-ink">Restore Database</h3>
+                    <p className="text-xs text-muted text-center mt-2 max-w-xs">
+                      Replace the current database file with a previously saved `.db` backup file. Will require an app reload.
+                    </p>
                   </button>
+                </div>
 
+                {/* Danger Zone */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-signature-coral/30 overflow-hidden mt-8">
+                  <div className="p-5 border-b border-signature-coral/20 bg-signature-coral/5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-signature-coral/10 rounded-lg flex items-center justify-center text-signature-coral">
+                        <AlertTriangle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-signature-coral">Danger Zone: System Reset</h3>
+                        <p className="text-xs text-signature-coral/80">Permanent destructive operations</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-signature-coral/5 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+                    <div>
+                      <h4 className="text-sm font-bold text-ink">Wipe All Application Data</h4>
+                      <p className="text-xs text-muted mt-1 max-w-xl leading-relaxed">
+                        Permanently deletes all inventory, sales, purchases, contacts, quotations, and returns. Protected by vendor activation code.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleWipeData}
+                      disabled={isLoading}
+                      className="flex items-center gap-2 bg-signature-coral hover:bg-red-600 text-white px-5 py-2.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 shrink-0 shadow-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Wipe All Data
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            <div className="bg-canvas rounded-xl shadow-sm border border-signature-coral/30 overflow-hidden mt-8">
-              <div className="p-6 border-b border-signature-coral/20 bg-signature-coral/5 flex items-center gap-3">
-                <div className="w-10 h-10 bg-signature-coral/10 rounded-lg flex items-center justify-center">
-                  <AlertTriangle className="w-5 h-5 text-signature-coral" />
+            {/* TAB 7: INTERFACE & SHORTCUTS */}
+            {activeTab === 'interface' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                <div className="border-b border-hairline pb-4">
+                  <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                    <Sliders className="w-5 h-5 text-primary" />
+                    Interface & Keyboard Shortcuts
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    Control interface behavior, sidebar hints, and view complete system keyboard shortcuts.
+                  </p>
                 </div>
-                <div>
-                  <h2 className="text-lg font-bold text-signature-coral">Danger Zone</h2>
-                  <p className="text-sm text-signature-coral/80">Irreversible destructive actions</p>
-                </div>
-              </div>
-              <div className="p-8 bg-signature-coral/5">
-                <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+
+                {/* Shortcuts Hint Toggle */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline p-6 flex items-center justify-between">
                   <div>
-                    <h3 className="text-base font-bold text-ink">Wipe All Data</h3>
-                    <p className="text-sm text-muted mt-1 max-w-xl">Permanently delete all products, sales, purchases, and contacts. This action cannot be undone and will reset the database to its initial state.</p>
+                    <h3 className="text-base font-bold text-ink">Show Keyboard Shortcuts in Sidebar</h3>
+                    <p className="text-sm text-muted mt-0.5">
+                      Displays handy shortcut badges (e.g. ^1, ^2, ^3) alongside menu items for faster navigation.
+                    </p>
                   </div>
                   <button
-                    onClick={handleWipeData}
-                    disabled={isLoading}
-                    className="flex items-center gap-2 bg-signature-coral hover:bg-red-600 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0 shadow-sm"
+                    onClick={toggleShortcuts}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${!hideShortcuts ? 'bg-primary' : 'bg-surface-strong'}`}
                   >
-                    <Trash2 className="w-5 h-5" />
-                    Wipe Data
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-canvas transition-transform ${!hideShortcuts ? 'translate-x-6' : 'translate-x-1'}`} />
                   </button>
                 </div>
+
+                {/* Keyboard Shortcuts Reference Guide */}
+                <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden">
+                  <div className="p-5 border-b border-hairline bg-surface-soft/60 flex items-center gap-2.5">
+                    <Keyboard className="w-4 h-4 text-primary" />
+                    <h3 className="text-sm font-bold text-ink uppercase tracking-wider">Quick Navigation Cheatsheet</h3>
+                  </div>
+                  <div className="divide-y divide-hairline">
+                    {[
+                      { key: 'Ctrl + 1 / ^1', action: 'Navigate to Dashboard', page: 'Overview' },
+                      { key: 'Ctrl + 2 / ^2', action: 'Navigate to Inventory', page: 'Stock & Items' },
+                      { key: 'Ctrl + 3 / ^3', action: 'Navigate to POS / Billing', page: 'Cashier Checkout' },
+                      { key: 'Ctrl + 4 / ^4', action: 'Navigate to Purchases', page: 'Inward Stock' },
+                      { key: 'Ctrl + 5 / ^5', action: 'Navigate to Day Book', page: 'Daily Transactions' },
+                      { key: 'Ctrl + 6 / ^6', action: 'Navigate to Payments', page: 'Passbook & Cheques' },
+                      { key: 'Ctrl + 7 / ^7', action: 'Navigate to Returns', page: 'Exchanges' },
+                      { key: 'Ctrl + 8 / ^8', action: 'Navigate to Godowns', page: 'Warehouses' },
+                      { key: 'Ctrl + 9 / ^9', action: 'Navigate to Contacts', page: 'Customers & Suppliers' },
+                      { key: 'Ctrl + 0 / ^0', action: 'Navigate to Reports', page: 'PDF & Analytics' },
+                      { key: 'F1', action: 'Focus Barcode Scanner', page: 'POS Checkout' },
+                      { key: 'Esc', action: 'Close Popups & Modals', page: 'Universal' },
+                    ].map(row => (
+                      <div key={row.key} className="px-6 py-3.5 flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-3">
+                          <kbd className="px-2.5 py-1 bg-surface-soft border border-hairline rounded font-mono text-xs font-bold text-ink shadow-sm">
+                            {row.key}
+                          </kbd>
+                          <span className="font-medium text-ink">{row.action}</span>
+                        </div>
+                        <span className="text-xs text-muted font-medium">{row.page}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
           </div>
-        )}
+        </div>
       </div>
 
+      {/* POPUP MODAL: WIPE DATA */}
       {showWipeModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-canvas w-full max-w-md rounded-2xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-canvas w-full max-w-md rounded-2xl shadow-xl overflow-hidden border border-hairline animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between p-6 border-b border-hairline bg-signature-coral/5">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-signature-coral/10 flex items-center justify-center text-signature-coral">
@@ -647,7 +1270,7 @@ export default function Settings() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-signature-coral">Wipe All Data</h3>
-                  <p className="text-xs text-signature-coral/80 font-medium">Irreversible Action</p>
+                  <p className="text-xs text-signature-coral/80 font-medium">Irreversible Destruction</p>
                 </div>
               </div>
               <button 
@@ -661,7 +1284,7 @@ export default function Settings() {
             <form onSubmit={confirmWipeData} className="p-6">
               <p className="text-sm text-body mb-6">
                 You are about to permanently delete all products, sales, purchases, and contacts. <br/><br/>
-                Please enter the 6-digit <strong>Activation Code</strong> (ask your vendor) to confirm this action.
+                Please enter the 6-digit <strong>Activation Code</strong> (provided by your vendor) to confirm this action.
               </p>
 
               {wipeError && (
@@ -707,14 +1330,15 @@ export default function Settings() {
         </div>
       )}
 
+      {/* POPUP MODAL: MANAGE UNIT TYPES */}
       {showUnitModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-canvas w-full max-w-lg rounded-2xl shadow-xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-canvas w-full max-w-lg rounded-2xl shadow-xl overflow-hidden border border-hairline animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between p-6 border-b border-hairline">
               <h2 className="text-xl font-bold text-ink">Manage Unit Types</h2>
               <button 
                 onClick={() => setShowUnitModal(false)}
-                className="text-muted hover:text-ink transition-colors"
+                className="text-muted hover:text-ink transition-colors p-1 rounded-md"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -725,25 +1349,26 @@ export default function Settings() {
                   type="text" 
                   value={newUnit} 
                   onChange={e => setNewUnit(e.target.value)} 
-                  placeholder="e.g. Kg, Dozen, Pack" 
-                  className="flex-1 px-3 py-2 bg-surface-soft border border-hairline rounded-md focus:outline-none focus:border-primary transition-colors text-ink text-sm"
+                  placeholder="e.g. Kg, Dozen, Pack, Meter" 
+                  className="flex-1 px-3.5 py-2 bg-surface-soft border border-hairline rounded-lg focus:outline-none focus:border-primary transition-colors text-ink text-sm"
                   onKeyDown={e => e.key === 'Enter' && addUnit()}
                   autoFocus
                 />
                 <button 
                   onClick={addUnit}
-                  className="px-4 py-2 bg-primary hover:bg-primary-active text-on-primary rounded-md font-medium text-sm transition-colors"
+                  disabled={!newUnit.trim()}
+                  className="px-4 py-2 bg-primary hover:bg-primary-active text-on-primary rounded-lg font-semibold text-xs transition-colors shadow-sm disabled:opacity-50"
                 >
                   Add Unit
                 </button>
               </div>
-              <div className="bg-surface-soft border border-hairline rounded-lg p-4 min-h-[150px] max-h-[300px] overflow-y-auto">
+              <div className="bg-surface-soft border border-hairline rounded-xl p-4 min-h-[150px] max-h-[300px] overflow-y-auto">
                 {customUnits.length === 0 ? (
                   <p className="text-sm text-muted text-center pt-8">No custom units found. Add some above.</p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {customUnits.map(unit => (
-                      <div key={unit} className="flex items-center gap-2 bg-canvas border border-hairline px-3 py-1.5 rounded-full shadow-sm">
+                      <div key={unit} className="flex items-center gap-2 bg-canvas border border-hairline px-3.5 py-1.5 rounded-full shadow-sm">
                         <span className="text-sm font-medium text-ink">{unit}</span>
                         <button onClick={() => removeUnit(unit)} className="text-muted hover:text-signature-coral transition-colors" title="Delete unit">
                           <X className="w-3.5 h-3.5" />
@@ -757,7 +1382,7 @@ export default function Settings() {
             <div className="p-4 border-t border-hairline bg-surface-soft flex justify-end">
               <button
                 onClick={() => setShowUnitModal(false)}
-                className="px-6 py-2 bg-ink text-canvas rounded-lg font-medium transition-colors hover:bg-ink/90"
+                className="px-6 py-2 bg-primary text-white rounded-lg font-semibold text-xs transition-colors hover:bg-primary-active shadow-sm"
               >
                 Done
               </button>
@@ -765,6 +1390,7 @@ export default function Settings() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

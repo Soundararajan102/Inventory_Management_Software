@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   Download, Calendar, Printer, Package, 
-  IndianRupee, ShoppingCart, Users, Truck, ArrowUpDown 
+  IndianRupee, ShoppingCart, Users, Truck, ArrowUpDown, Search 
 } from 'lucide-react';
 import { 
   getSalesReport, getPurchaseReport, getExpenseReport, getProductWiseSalesReport,
@@ -27,6 +27,8 @@ export default function Reports() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [productSales, setProductSales] = useState<ProductWiseSale[]>([]);
   const [inventory, setInventory] = useState<InventoryValuationItem[]>([]);
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventoryFilter, setInventoryFilter] = useState<'all' | 'low_stock' | 'out_of_stock'>('all');
 
   // Party Ledger Filter States
   const [partyType, setPartyType] = useState<'customer' | 'supplier'>('customer');
@@ -130,9 +132,31 @@ export default function Reports() {
   const totalExpensesAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
   const totalProductSalesAmount = productSales.reduce((sum, ps) => sum + ps.total_revenue, 0);
 
-  const totalStockValuation = inventory.reduce((sum, i) => sum + (i.stock_valuation || 0), 0);
-  const totalRetailValuation = inventory.reduce((sum, i) => sum + (i.retail_valuation || 0), 0);
-  const totalStockUnits = inventory.reduce((sum, i) => sum + (i.stock_quantity || 0), 0);
+  // Filtered inventory calculations
+  const filteredInventory = inventory.filter(item => {
+    const q = inventorySearch.toLowerCase().trim();
+    const matchesSearch = !q || (
+      item.name.toLowerCase().includes(q) ||
+      (item.model && item.model.toLowerCase().includes(q)) ||
+      (item.group_name && item.group_name.toLowerCase().includes(q)) ||
+      (item.brand_name && item.brand_name.toLowerCase().includes(q))
+    );
+    if (!matchesSearch) return false;
+
+    if (inventoryFilter === 'low_stock') {
+      return item.stock_quantity <= (item.min_stock ?? 5) && item.stock_quantity > 0;
+    }
+    if (inventoryFilter === 'out_of_stock') {
+      return item.stock_quantity <= 0;
+    }
+    return true;
+  });
+
+  const totalStockValuation = filteredInventory.reduce((sum, i) => sum + (i.stock_valuation || 0), 0);
+  const totalRetailValuation = filteredInventory.reduce((sum, i) => sum + (i.retail_valuation || 0), 0);
+  const totalStockUnits = filteredInventory.reduce((sum, i) => sum + (i.stock_quantity || 0), 0);
+  const lowStockCount = inventory.filter(i => i.stock_quantity <= (i.min_stock ?? 5) && i.stock_quantity > 0).length;
+  const outOfStockCount = inventory.filter(i => i.stock_quantity <= 0).length;
 
   // Trigger PDF Report Generation & Print Dialog
   const handleExportPDF = () => {
@@ -214,27 +238,50 @@ export default function Reports() {
         }
       };
     } else if (activeTab === 'inventory') {
+      if (filteredInventory.length === 0) {
+        alert("No inventory records found matching your search or filter.");
+        return;
+      }
+
+      const reportTitle = inventoryFilter === 'low_stock'
+        ? 'LOW STOCK INVENTORY REPORT'
+        : inventoryFilter === 'out_of_stock'
+        ? 'OUT OF STOCK INVENTORY REPORT'
+        : inventorySearch.trim()
+        ? `INVENTORY STOCK REPORT (Search: "${inventorySearch.trim()}")`
+        : 'INVENTORY STOCK & VALUATION REPORT';
+
+      const filterSubtitle = inventoryFilter === 'low_stock'
+        ? 'Filter: Low Stock (Below Reorder Level)'
+        : inventoryFilter === 'out_of_stock'
+        ? 'Filter: Out of Stock'
+        : inventorySearch.trim()
+        ? `Search: "${inventorySearch.trim()}"`
+        : 'All Active Inventory Items';
+
       reportData = {
-        reportTitle: 'INVENTORY STOCK VALUATION REPORT',
-        subTitle: `As of ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`,
+        reportTitle,
+        subTitle: `As of ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} • ${filterSubtitle}`,
         summaryCards: [
-          { label: 'Total Inventory Valuation (Cost)', value: `₹${totalStockValuation.toFixed(2)}`, highlight: true },
+          { label: 'Total Stock Valuation (Cost)', value: `₹${totalStockValuation.toFixed(2)}`, highlight: true },
           { label: 'Potential Retail Value', value: `₹${totalRetailValuation.toFixed(2)}` },
-          { label: 'Total Product Items (SKUs)', value: inventory.length },
+          { label: 'Total Product Items (SKUs)', value: filteredInventory.length },
           { label: 'Total Stock Units', value: totalStockUnits }
         ],
         columns: [
           { header: 'Item Name', accessor: 'name' },
           { header: 'Model / Spec', accessor: 'model' },
           { header: 'Category', accessor: 'group_name' },
+          { header: 'Brand', accessor: 'brand_name' },
           { header: 'Stock Qty', accessor: 'stock_display', align: 'center' },
           { header: 'Cost Price (₹)', accessor: 'formattedPurchase', align: 'right' },
           { header: 'Selling Price (₹)', accessor: 'formattedSelling', align: 'right' },
           { header: 'Stock Value (₹)', accessor: 'formattedValuation', align: 'right' }
         ],
-        rows: inventory.map(item => ({
+        rows: filteredInventory.map(item => ({
           ...item,
           model: item.model || '-',
+          brand_name: item.brand_name || '-',
           stock_display: `${item.stock_quantity} ${item.unit}`,
           formattedPurchase: `₹${item.purchase_price.toFixed(2)}`,
           formattedSelling: `₹${item.selling_price.toFixed(2)}`,
@@ -243,7 +290,8 @@ export default function Reports() {
         totalRow: {
           name: '',
           model: '',
-          group_name: `${inventory.length} Items`,
+          group_name: `${filteredInventory.length} Items`,
+          brand_name: '',
           stock_display: `${totalStockUnits} Units`,
           formattedPurchase: '',
           formattedSelling: `₹${totalRetailValuation.toFixed(2)}`,
@@ -357,8 +405,12 @@ export default function Reports() {
         csv += `${p.date.split(' ')[0]},"${p.supplier_name}","${p.invoice_number}","${p.supplier_invoice_date || ''}","${(p.products_bought || '').replace(/"/g, '""')}",${p.total_quantity || 0},${p.status},${(p.net_amount - p.tax_amount).toFixed(2)},${p.tax_amount},${p.net_amount}\n`;
       });
     } else if (activeTab === 'inventory') {
+      if (filteredInventory.length === 0) {
+        alert("No inventory records found matching your search or filter.");
+        return;
+      }
       csv = 'Product ID,Item Name,Model,Category,Brand,Stock Quantity,Unit,Cost Price,Selling Price,Stock Valuation,Retail Valuation\n';
-      inventory.forEach(i => {
+      filteredInventory.forEach(i => {
         csv += `${i.id},"${i.name}","${i.model || ''}","${i.group_name || ''}","${i.brand_name || ''}",${i.stock_quantity},"${i.unit}",${i.purchase_price},${i.selling_price},${i.stock_valuation},${i.retail_valuation}\n`;
       });
     } else if (activeTab === 'products') {
@@ -392,7 +444,9 @@ export default function Reports() {
           name: 'CSV File',
           extensions: ['csv']
         }],
-        defaultPath: `${activeTab}_report_${startDate}_to_${endDate}.csv`
+        defaultPath: activeTab === 'inventory'
+          ? `inventory_stock_report_${new Date().toISOString().split('T')[0]}.csv`
+          : `${activeTab}_report_${startDate}_to_${endDate}.csv`
       });
 
       if (savePath) {
@@ -470,7 +524,7 @@ export default function Reports() {
                 className={`px-3.5 py-2 rounded-lg font-medium text-xs flex items-center transition-all ${activeTab === 'inventory' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-surface-soft'}`}
               >
                 <Package className="w-3.5 h-3.5 mr-1.5" />
-                Stock Valuation
+                Inventory Stock Report
               </button>
 
               <button 
@@ -497,6 +551,57 @@ export default function Reports() {
                 Product Sales
               </button>
             </div>
+
+            {/* Inventory Filters (Search, Stock Status, Export Stock PDF) */}
+            {activeTab === 'inventory' && (
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {/* Search */}
+                <div className="flex items-center gap-1.5 bg-canvas px-2.5 py-1.5 border border-hairline rounded-md focus-within:border-primary">
+                  <Search className="w-3.5 h-3.5 text-muted shrink-0" />
+                  <input
+                    type="text"
+                    placeholder="Search stock..."
+                    value={inventorySearch}
+                    onChange={e => setInventorySearch(e.target.value)}
+                    className="bg-transparent text-ink text-xs focus:outline-none w-36 sm:w-44 placeholder-muted font-medium"
+                  />
+                  {inventorySearch && (
+                    <button onClick={() => setInventorySearch('')} className="text-muted hover:text-ink text-xs font-bold leading-none">×</button>
+                  )}
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex items-center bg-surface-soft p-1 rounded-md border border-hairline gap-1">
+                  <button 
+                    onClick={() => setInventoryFilter('all')} 
+                    className={`px-2.5 py-1 rounded font-medium transition-colors ${inventoryFilter === 'all' ? 'bg-primary text-on-primary shadow-2xs' : 'text-muted hover:text-ink hover:bg-canvas'}`}
+                  >
+                    All ({inventory.length})
+                  </button>
+                  <button 
+                    onClick={() => setInventoryFilter('low_stock')} 
+                    className={`px-2.5 py-1 rounded font-medium transition-colors ${inventoryFilter === 'low_stock' ? 'bg-amber-600 text-white shadow-2xs' : 'text-muted hover:text-amber-600 hover:bg-canvas'}`}
+                  >
+                    Low Stock ({lowStockCount})
+                  </button>
+                  <button 
+                    onClick={() => setInventoryFilter('out_of_stock')} 
+                    className={`px-2.5 py-1 rounded font-medium transition-colors ${inventoryFilter === 'out_of_stock' ? 'bg-rose-600 text-white shadow-2xs' : 'text-muted hover:text-rose-600 hover:bg-canvas'}`}
+                  >
+                    Out of Stock ({outOfStockCount})
+                  </button>
+                </div>
+
+                <button
+                  onClick={handleExportPDF}
+                  className="bg-primary hover:bg-primary-active text-on-primary px-3 py-1.5 rounded-md font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                  title="Export Stock Summary as PDF / Print"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Export Stock PDF</span>
+                </button>
+              </div>
+            )}
 
             {/* Date Range Pickers (Except for Inventory which is as-of-now) */}
             {activeTab !== 'inventory' && (
@@ -623,7 +728,7 @@ export default function Reports() {
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
                   <span className="text-[11px] font-semibold uppercase text-muted block">Product Count (SKUs)</span>
-                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{inventory.length}</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{filteredInventory.length}</span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
                   <span className="text-[11px] font-semibold uppercase text-muted block">Total Stock Units</span>
@@ -784,21 +889,29 @@ export default function Reports() {
                 ))}
 
                 {/* 3. INVENTORY STOCK ROWS */}
-                {activeTab === 'inventory' && inventory.map((item, idx) => (
-                  <tr key={item.id} className="hover:bg-surface-soft/60 transition-colors">
-                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
-                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{item.name}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{item.model || '-'}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{item.group_name}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{item.brand_name}</td>
-                    <td className="px-4 py-3 text-center font-semibold text-ink tabular-nums whitespace-nowrap">
-                      {item.stock_quantity} {item.unit}
-                    </td>
-                    <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.purchase_price.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.selling_price.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">₹{item.stock_valuation.toFixed(2)}</td>
-                  </tr>
-                ))}
+                {activeTab === 'inventory' && filteredInventory.map((item, idx) => {
+                  const isOutOfStock = item.stock_quantity <= 0;
+                  const isLowStock = !isOutOfStock && item.stock_quantity <= (item.min_stock ?? 5);
+                  return (
+                    <tr key={item.id} className="hover:bg-surface-soft/60 transition-colors">
+                      <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                      <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{item.name}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{item.model || '-'}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{item.group_name}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{item.brand_name}</td>
+                      <td className="px-4 py-3 text-center font-semibold tabular-nums whitespace-nowrap">
+                        <span className={isOutOfStock ? 'text-rose-600 font-bold' : isLowStock ? 'text-amber-600 font-bold' : 'text-ink'}>
+                          {item.stock_quantity} {item.unit}
+                        </span>
+                        {isLowStock && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">Low</span>}
+                        {isOutOfStock && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 font-medium">Out</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.purchase_price.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.selling_price.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">₹{item.stock_valuation.toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
 
                 {/* 4. EXPENSES ROWS */}
                 {activeTab === 'expenses' && expenses.map((expense, idx) => (
@@ -853,7 +966,7 @@ export default function Reports() {
                 {/* Empty State */}
                 {((activeTab === 'sales' && sales.length === 0) ||
                   (activeTab === 'purchases' && purchases.length === 0) ||
-                  (activeTab === 'inventory' && inventory.length === 0) ||
+                  (activeTab === 'inventory' && filteredInventory.length === 0) ||
                   (activeTab === 'expenses' && expenses.length === 0) ||
                   (activeTab === 'ledger' && (!partyLedgerResult || partyLedgerResult.entries.length === 0)) ||
                   (activeTab === 'products' && productSales.length === 0)) && (

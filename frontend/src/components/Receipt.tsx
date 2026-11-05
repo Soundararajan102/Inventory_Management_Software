@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import type { CartItem } from '../lib/db';
+import type { CartItem, DispatchDetails } from '../lib/db';
 
 export interface ReceiptData {
   invoiceNumber: string;
@@ -28,6 +28,7 @@ export interface ReceiptData {
   bankName?: string;
   chequeDate?: string;
   sourceLocationName?: string;
+  dispatchDetails?: DispatchDetails;
 }
 
 interface ReceiptProps {
@@ -115,6 +116,12 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
   const shopPhone = localStorage.getItem('shopPhone') || '+91 9876543210';
   const shopGSTIN = (localStorage.getItem('shopGSTIN') || '27XXXXX1234X1X1').toUpperCase();
 
+  const disp = data.dispatchDetails || {};
+  const hasDispatch = Boolean(
+    disp.ewayBillNo || disp.dispatchDocNo || disp.motorVehicleNo || 
+    disp.dispatchedThrough || disp.destination || disp.carrierName || disp.billOfLadingNo || disp.termsOfDelivery
+  );
+
   // HSN summary grouping
   const hsnSummary: Record<string, { taxable: number, cgstRate: number, cgstAmount: number, sgstRate: number, sgstAmount: number }> = {};
   mappedItems.forEach(item => {
@@ -131,11 +138,32 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
     <div id="printable-receipt" className="hidden print:block bg-white text-black font-sans w-full max-w-4xl mx-auto" style={{ boxSizing: 'border-box' }}>
       <style>
         {`
-          @page { size: A4; margin: 10mm; }
+          @page { size: A4 portrait; margin: 5mm 6mm; }
           @media print {
-            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              height: auto !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            #printable-receipt {
+              display: block !important;
+              width: 100% !important;
+              max-width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+              page-break-after: avoid !important;
+              break-after: avoid !important;
+            }
             .tally-table { width: 100%; border-collapse: collapse; }
-            .tally-table th, .tally-table td { border: 1px solid #000; padding: 4px; }
+            .tally-table th, .tally-table td { 
+              border: 1px solid #000; 
+              padding: 2px 4px !important; 
+              line-height: 1.2 !important; 
+            }
             .tally-border { border: 1px solid #000; }
             .tally-border-b { border-bottom: 1px solid #000; }
             .tally-border-r { border-right: 1px solid #000; }
@@ -150,23 +178,23 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
         `}
       </style>
 
-      <h1 className="text-center text-xl font-bold mb-1">
+      <h1 className="text-center text-lg font-bold mb-1">
         {data.isQuotation ? 'ESTIMATE / QUOTATION' : 'TAX INVOICE'}
       </h1>
       
-      <div className="tally-border flex flex-col w-full text-[11px] leading-tight">
+      <div className="tally-border flex flex-col w-full text-[10.5px] leading-tight">
         
         {/* Top Section */}
         <div className="flex w-full tally-border-b">
           {/* Left Column */}
           <div className="w-1/2 tally-border-r flex flex-col">
-            <div className="p-2 tally-border-b min-h-[100px]">
+            <div className="p-1.5 tally-border-b">
               <div className="font-bold text-sm">{shopName}</div>
               <div>{shopAddress}</div>
               <div>Mobile no. : {shopPhone}</div>
               <div>GSTIN : {shopGSTIN}</div>
             </div>
-            <div className="p-2 min-h-[120px]">
+            <div className="p-1.5">
               <div>{data.isQuotation ? 'Quotation For' : 'Billed To'}</div>
               <div className="font-bold">{data.customerDetails?.name || data.customerName}</div>
               <div>{data.customerDetails?.address}</div>
@@ -176,36 +204,102 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           </div>
           
           {/* Right Column */}
-          <div className="w-1/2 flex flex-col">
-            <div className="flex tally-border-b">
-              <div className="w-1/2 tally-border-r p-2">
-                <div>{data.isQuotation ? 'Quotation No.' : 'Invoice No.'}</div>
-                <div className="font-bold">{data.isQuotation ? (data.quotationNumber || data.invoiceNumber) : data.invoiceNumber}</div>
-              </div>
-              <div className="w-1/2 p-2">
-                <div>Dated</div>
-                <div className="font-bold">{data.date}</div>
-              </div>
-            </div>
-            <div className="flex tally-border-b flex-1">
-              <div className="w-1/2 tally-border-r p-2">
-                <div>{data.isQuotation ? 'Validity' : 'Mode/Terms of Payment'}</div>
-                <div className="font-bold">{data.isQuotation ? 'Valid for 30 Days' : (data.paidAmount >= data.netAmount ? 'Cash/Paid' : 'Credit')}</div>
-              </div>
-              <div className="w-1/2 p-2">
-                {data.sourceLocationName && data.sourceLocationName !== 'Main Shop' ? (
-                  <>
-                    <div>Dispatched From</div>
-                    <div className="font-bold">{data.sourceLocationName}</div>
-                  </>
-                ) : null}
-              </div>
-            </div>
+          <div className="w-1/2 flex flex-col text-[10px]">
+            {hasDispatch ? (
+              <>
+                {/* Row 1: Invoice No | e-Way Bill No. | Dated */}
+                <div className="flex tally-border-b">
+                  <div className="w-1/3 tally-border-r p-1">
+                    <div className="text-[9px] text-gray-700">Invoice No.</div>
+                    <div className="font-bold text-[10.5px] truncate min-h-[14px]">{data.isQuotation ? (data.quotationNumber || data.invoiceNumber) : data.invoiceNumber}</div>
+                  </div>
+                  <div className="w-1/3 tally-border-r p-1">
+                    <div className="text-[9px] text-gray-700">e-Way Bill No.</div>
+                    <div className="font-bold text-[10.5px] truncate min-h-[14px]">{disp.ewayBillNo || ''}</div>
+                  </div>
+                  <div className="w-1/3 p-1">
+                    <div className="text-[9px] text-gray-700">Dated</div>
+                    <div className="font-bold text-[10.5px] truncate min-h-[14px]">{data.date}</div>
+                  </div>
+                </div>
+
+                {/* Row 2: Delivery Note / Dispatch Doc | Mode/Terms of Payment */}
+                <div className="flex tally-border-b">
+                  <div className="w-1/2 tally-border-r p-1">
+                    <div className="text-[9px] text-gray-700">Delivery Note / Dispatch Doc</div>
+                    <div className="font-bold truncate min-h-[14px]">{disp.dispatchDocNo || ''}</div>
+                  </div>
+                  <div className="w-1/2 p-1">
+                    <div className="text-[9px] text-gray-700">Mode/Terms of Payment</div>
+                    <div className="font-bold truncate min-h-[14px]">{data.isQuotation ? 'Valid for 30 Days' : (data.paidAmount >= data.netAmount ? (data.paymentMethod || 'Cash/Paid') : 'Credit')}</div>
+                  </div>
+                </div>
+
+                {/* Row 3: Dispatched through | Destination */}
+                <div className="flex tally-border-b">
+                  <div className="w-1/2 tally-border-r p-1">
+                    <div className="text-[9px] text-gray-700">Dispatched through</div>
+                    <div className="font-bold truncate min-h-[14px]">{disp.dispatchedThrough || disp.carrierName || ''}</div>
+                  </div>
+                  <div className="w-1/2 p-1">
+                    <div className="text-[9px] text-gray-700">Destination</div>
+                    <div className="font-bold truncate min-h-[14px]">{disp.destination || ''}</div>
+                  </div>
+                </div>
+
+                {/* Row 4: Bill of Lading/LR-RR No. | Motor Vehicle No. */}
+                <div className="flex tally-border-b flex-1">
+                  <div className="w-1/2 tally-border-r p-1">
+                    <div className="text-[9px] text-gray-700">Bill of Lading / LR-RR No.</div>
+                    <div className="font-bold truncate min-h-[14px]">{disp.billOfLadingNo || ''}</div>
+                  </div>
+                  <div className="w-1/2 p-1">
+                    <div className="text-[9px] text-gray-700">Motor Vehicle No.</div>
+                    <div className="font-bold text-[10.5px] truncate min-h-[14px]">{disp.motorVehicleNo || ''}</div>
+                  </div>
+                </div>
+
+                {/* Row 5: Terms of Delivery */}
+                {disp.termsOfDelivery && (
+                  <div className="p-1">
+                    <span className="text-[9px] text-gray-700">Terms of Delivery: </span>
+                    <span className="font-semibold">{disp.termsOfDelivery}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="flex tally-border-b">
+                  <div className="w-1/2 tally-border-r p-1.5">
+                    <div>{data.isQuotation ? 'Quotation No.' : 'Invoice No.'}</div>
+                    <div className="font-bold">{data.isQuotation ? (data.quotationNumber || data.invoiceNumber) : data.invoiceNumber}</div>
+                  </div>
+                  <div className="w-1/2 p-1.5">
+                    <div>Dated</div>
+                    <div className="font-bold">{data.date}</div>
+                  </div>
+                </div>
+                <div className="flex tally-border-b flex-1">
+                  <div className="w-1/2 tally-border-r p-1.5">
+                    <div>{data.isQuotation ? 'Validity' : 'Mode/Terms of Payment'}</div>
+                    <div className="font-bold">{data.isQuotation ? 'Valid for 30 Days' : (data.paidAmount >= data.netAmount ? (data.paymentMethod || 'Cash/Paid') : 'Credit')}</div>
+                  </div>
+                  <div className="w-1/2 p-1.5">
+                    {data.sourceLocationName && data.sourceLocationName !== 'Main Shop' ? (
+                      <>
+                        <div>Dispatched From</div>
+                        <div className="font-bold">{data.sourceLocationName}</div>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
         {/* Items Table */}
-        <table className="tally-table text-[11px]">
+        <table className="tally-table text-[10.5px]">
           <thead>
             <tr>
               <th className="w-[5%] font-normal">Sr<br/>No.</th>
@@ -221,89 +315,94 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           <tbody>
             {mappedItems.map((item, i) => (
               <tr key={i} className="item-row align-top">
-                <td className="text-center pt-2 pb-1">{i + 1}</td>
-                <td className="pt-2 pb-1">
+                <td className="text-center py-0.5">{i + 1}</td>
+                <td className="py-0.5">
                   <div className="font-bold">{item.name}</div>
-                  {item.model && !item.name.includes(item.model) && <div>Model : {item.model}</div>}
+                  {item.model && !item.name.includes(item.model) && <div className="text-[9.5px]">Model : {item.model}</div>}
                 </td>
-                <td className="text-center pt-2 pb-1">{item.hsn_code}</td>
-                <td className="text-right font-bold pt-2 pb-1">{item.cart_qty} <span className="font-normal">{item.unit || 'no'}</span></td>
-                <td className="text-right pt-2 pb-1">{item.selling_price.toFixed(2)}</td>
-                <td className="text-center pt-2 pb-1">{item.unit || 'no'}</td>
-                <td className="text-right pt-2 pb-1">
+                <td className="text-center py-0.5">{item.hsn_code}</td>
+                <td className="text-right font-bold py-0.5">{item.cart_qty} <span className="font-normal">{item.unit || 'no'}</span></td>
+                <td className="text-right py-0.5">{item.selling_price.toFixed(2)}</td>
+                <td className="text-center py-0.5">{item.unit || 'no'}</td>
+                <td className="text-right py-0.5">
                   {discountRatio > 0 ? (discountRatio * 100).toFixed(2) + '%' : ''}
                 </td>
-                <td className="text-right font-bold pt-2 pb-1">{item.taxableValue.toFixed(2)}</td>
+                <td className="text-right font-bold py-0.5">{item.taxableValue.toFixed(2)}</td>
               </tr>
             ))}
             
-            {/* Filler row to push taxes down and simulate Tally's min-height */}
-            <tr className="item-row">
-              <td className="h-[40px]"></td>
-              <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-            </tr>
-
-            {/* Taxes */}
-            {Object.entries(taxBreakdown.cgst).map(([pct, amt]) => (
-               <tr key={'cgst'+pct} className="item-row">
-                 <td></td>
-                 <td className="text-right font-bold pt-1 pb-1">CGST @ {pct}%</td>
-                 <td></td><td></td>
-                 <td className="text-right pt-1 pb-1">{pct}</td>
-                 <td className="text-center pt-1 pb-1">%</td>
-                 <td></td>
-                 <td className="text-right font-bold pt-1 pb-1">{amt.toFixed(2)}</td>
-               </tr>
-            ))}
-            {Object.entries(taxBreakdown.sgst).map(([pct, amt]) => (
-               <tr key={'sgst'+pct} className="item-row">
-                 <td></td>
-                 <td className="text-right font-bold pt-1 pb-1">SGST @ {pct}%</td>
-                 <td></td><td></td>
-                 <td className="text-right pt-1 pb-1">{pct}</td>
-                 <td className="text-center pt-1 pb-1">%</td>
-                 <td></td>
-                 <td className="text-right font-bold pt-1 pb-1">{amt.toFixed(2)}</td>
-               </tr>
-            ))}
-            {Math.abs(roundOff) > 0.001 && (
-               <tr className="item-row">
-                 <td></td>
-                 <td className="text-right font-bold pt-1 pb-1">Round Off</td>
-                 <td></td><td></td><td></td><td></td><td></td>
-                 <td className="text-right font-bold pt-1 pb-1">{roundOff.toFixed(2)}</td>
-               </tr>
+            {/* Dynamic minimal filler only for small bills */}
+            {mappedItems.length < 3 && (
+              <tr className="item-row">
+                <td style={{ height: `${(3 - mappedItems.length) * 20}px` }}></td>
+                <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+              </tr>
             )}
-            
+
             {/* Total Row */}
-            <tr>
-              <td colSpan={3} className="text-right font-bold">Total</td>
-              <td className="text-right font-bold">{totalQty}</td>
-              <td colSpan={3}></td>
-              <td className="text-right font-bold">{data.netAmount.toFixed(2)}</td>
+            <tr className="font-bold">
+              <td colSpan={3} className="text-right py-1">Total</td>
+              <td className="text-right py-1">{totalQty}</td>
+              <td colSpan={3} className="text-right py-1 font-semibold text-gray-700">Taxable Subtotal</td>
+              <td className="text-right py-1">{totalTaxableValue.toFixed(2)}</td>
             </tr>
           </tbody>
         </table>
 
-        {/* Amount Chargeable in words & Payment Status */}
-        <div className="p-2 tally-border-b border-t-0 flex justify-between items-start">
-          <div>
-            <div>Amount Chargeable (in words)</div>
-            <div className="font-bold">{numberToWords(Math.round(data.netAmount))}</div>
-          </div>
-          {!data.isQuotation && (
-            <div className="text-right text-[11px]">
-              <div>Mode: <span className="font-bold">{data.paymentMethod || 'Cash'}</span></div>
-              {data.chequeNo && (
-                <div className="font-mono">Chq #{data.chequeNo} {data.bankName ? `(${data.bankName})` : ''}</div>
-              )}
-              <div>Paid: <span className="font-bold">₹{data.paidAmount.toFixed(2)}</span> | Balance: <span className="font-bold">₹{Math.max(0, data.netAmount - data.paidAmount).toFixed(2)}</span></div>
+        {/* Bill Summary Block: Words & Payment on Left, Tax & Grand Total on Right */}
+        <div className="flex w-full tally-border-b border-t-0 text-[10.5px]">
+          {/* Left Column: Words and Payment Details */}
+          <div className="w-[55%] tally-border-r p-1.5 flex flex-col justify-between">
+            <div>
+              <div className="text-gray-600 text-[10px]">Amount Chargeable (in words)</div>
+              <div className="font-bold text-[11px] leading-snug">{numberToWords(Math.round(data.netAmount))}</div>
             </div>
-          )}
+            {!data.isQuotation && (
+              <div className="mt-2 text-[10px]">
+                <div>Mode of Payment: <span className="font-bold">{data.paymentMethod || 'Cash'}</span></div>
+                {data.chequeNo && (
+                  <div className="font-mono">Chq #{data.chequeNo} {data.bankName ? `(${data.bankName})` : ''}</div>
+                )}
+                <div>Paid: <span className="font-bold">₹{data.paidAmount.toFixed(2)}</span> | Balance: <span className="font-bold">₹{Math.max(0, data.netAmount - data.paidAmount).toFixed(2)}</span></div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Column: Tax Breakdown & Invoice Total */}
+          <div className="w-[45%] p-1.5 flex flex-col justify-between">
+            <div className="space-y-0.5">
+              <div className="flex justify-between py-0.5">
+                <span className="text-gray-700">Taxable Value:</span>
+                <span className="font-bold">₹{totalTaxableValue.toFixed(2)}</span>
+              </div>
+              {Object.entries(taxBreakdown.cgst).map(([pct, amt]) => (
+                <div key={'cgst' + pct} className="flex justify-between py-0.5 text-gray-700">
+                  <span>Central Tax / CGST ({pct}%):</span>
+                  <span>₹{amt.toFixed(2)}</span>
+                </div>
+              ))}
+              {Object.entries(taxBreakdown.sgst).map(([pct, amt]) => (
+                <div key={'sgst' + pct} className="flex justify-between py-0.5 text-gray-700">
+                  <span>State Tax / SGST ({pct}%):</span>
+                  <span>₹{amt.toFixed(2)}</span>
+                </div>
+              ))}
+              {Math.abs(roundOff) > 0.001 && (
+                <div className="flex justify-between py-0.5 text-gray-700">
+                  <span>Round Off:</span>
+                  <span>{roundOff >= 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-between items-center border-t border-black pt-1 mt-1 font-bold text-[11.5px]">
+              <span>Invoice Total:</span>
+              <span>₹{data.netAmount.toFixed(2)}</span>
+            </div>
+          </div>
         </div>
 
         {/* HSN Summary */}
-        <table className="tally-table text-[11px] border-t-0">
+        <table className="tally-table text-[10px] border-t-0">
           <thead>
             <tr>
               <th rowSpan={2} className="font-normal w-[20%]">HSN/SAC</th>
@@ -322,37 +421,37 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           <tbody>
             {Object.entries(hsnSummary).map(([hsn, sum]) => (
               <tr key={hsn}>
-                <td className="text-center">{hsn}</td>
-                <td className="text-right">{sum.taxable.toFixed(2)}</td>
-                <td className="text-right">{sum.cgstRate}%</td>
-                <td className="text-right">{sum.cgstAmount.toFixed(2)}</td>
-                <td className="text-right">{sum.sgstRate}%</td>
-                <td className="text-right">{sum.sgstAmount.toFixed(2)}</td>
-                <td className="text-right">{(sum.cgstAmount + sum.sgstAmount).toFixed(2)}</td>
+                <td className="text-center py-0.5">{hsn}</td>
+                <td className="text-right py-0.5">{sum.taxable.toFixed(2)}</td>
+                <td className="text-right py-0.5">{sum.cgstRate}%</td>
+                <td className="text-right py-0.5">{sum.cgstAmount.toFixed(2)}</td>
+                <td className="text-right py-0.5">{sum.sgstRate}%</td>
+                <td className="text-right py-0.5">{sum.sgstAmount.toFixed(2)}</td>
+                <td className="text-right py-0.5">{(sum.cgstAmount + sum.sgstAmount).toFixed(2)}</td>
               </tr>
             ))}
             <tr>
-              <td className="text-right font-bold">Total</td>
-              <td className="text-right font-bold">{totalTaxableValue.toFixed(2)}</td>
+              <td className="text-right font-bold py-0.5">Total</td>
+              <td className="text-right font-bold py-0.5">{totalTaxableValue.toFixed(2)}</td>
               <td></td>
-              <td className="text-right font-bold">{totalCgst.toFixed(2)}</td>
+              <td className="text-right font-bold py-0.5">{totalCgst.toFixed(2)}</td>
               <td></td>
-              <td className="text-right font-bold">{totalSgst.toFixed(2)}</td>
-              <td className="text-right font-bold">{(totalCgst + totalSgst).toFixed(2)}</td>
+              <td className="text-right font-bold py-0.5">{totalSgst.toFixed(2)}</td>
+              <td className="text-right font-bold py-0.5">{(totalCgst + totalSgst).toFixed(2)}</td>
             </tr>
           </tbody>
         </table>
 
-        <div className="p-2 tally-border-b border-t-0">
+        <div className="p-1.5 tally-border-b border-t-0 text-[10.5px]">
           <div>Tax Amount (in words)</div>
           <div className="font-bold">{numberToWords(totalCgst + totalSgst)}</div>
         </div>
 
-        <div className="p-2 border-t-0 flex">
+        <div className="p-1.5 border-t-0 flex text-[10.5px]">
           <div className="w-1/2">
             <div>Company's GST No. : <span className="font-bold">{shopGSTIN}</span></div>
-            <div className="mt-4">
-              <div className="underline mb-1">Declaration</div>
+            <div className="mt-1.5">
+              <div className="underline mb-0.5 font-semibold">Declaration</div>
               {data.isQuotation ? (
                 <div>We declare that this quotation/estimate is valid for 30 days unless revoked and is issued for information purposes.</div>
               ) : (
@@ -363,14 +462,14 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
               )}
             </div>
           </div>
-          <div className="w-1/2 tally-border-l tally-border-t p-2 flex flex-col justify-between -m-2 ml-2">
+          <div className="w-1/2 tally-border-l tally-border-t p-1.5 flex flex-col justify-between -m-1.5 ml-1.5">
             <div className="text-right font-bold">for {shopName}</div>
-            <div className="text-right mt-16">Authorised Signatory</div>
+            <div className="text-right mt-6">Authorised Signatory</div>
           </div>
         </div>
       </div>
       
-      <div className="text-center mt-2 text-xs">
+      <div className="text-center mt-1 text-[9.5px] text-gray-600">
         {data.isQuotation ? 'This is a Computer Generated Quotation / Estimate' : 'This is a Computer Generated Invoice'}
       </div>
     </div>

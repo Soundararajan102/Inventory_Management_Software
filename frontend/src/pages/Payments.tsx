@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { 
   Search, 
   X, 
@@ -12,7 +13,8 @@ import {
   Calendar, 
   Check, 
   AlertCircle,
-  Building2
+  Building2,
+  Plus
 } from 'lucide-react';
 import { 
   getCustomers, 
@@ -22,9 +24,11 @@ import {
   getChequesRegister, 
   clearPdcCheque, 
   bounceCheque,
-  isPdcDate
+  isPdcDate,
+  getPartyProfileData,
+  applyAdvanceToClearDues
 } from '../lib/db';
-import type { Customer, Supplier, PaymentHistory } from '../lib/db';
+import type { Customer, Supplier, PaymentHistory, PartyBillItem } from '../lib/db';
 import { PrintableReport } from '../components/PrintableReport';
 import type { PrintableReportData } from '../components/PrintableReport';
 
@@ -54,7 +58,10 @@ function getPdcDaysLabel(dateStr?: string | null): { text: string; isPast: boole
 }
 
 export default function Payments() {
-  const [activeTab, setActiveTab] = useState<'customers' | 'suppliers' | 'cheques'>('customers');
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState<'customers' | 'suppliers' | 'cheques'>(
+    (location.state as any)?.activeTab || 'customers'
+  );
   const [search, setSearch] = useState('');
   
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -63,10 +70,22 @@ export default function Payments() {
   const [cheques, setCheques] = useState<PaymentHistory[]>([]);
   
   const [showHistory, setShowHistory] = useState(false);
-  const [chequeStatusFilter, setChequeStatusFilter] = useState<'all' | 'pdc_pending' | 'cleared' | 'bounced'>('all');
+  const [chequeStatusFilter, setChequeStatusFilter] = useState<'all' | 'pdc_pending' | 'cleared' | 'bounced'>(
+    (location.state as any)?.chequeStatusFilter || 'all'
+  );
+
+  useEffect(() => {
+    if ((location.state as any)?.activeTab) {
+      setActiveTab((location.state as any).activeTab);
+    }
+    if ((location.state as any)?.chequeStatusFilter) {
+      setChequeStatusFilter((location.state as any).chequeStatusFilter);
+    }
+  }, [location.state]);
   
   const [selectedEntity, setSelectedEntity] = useState<Customer | Supplier | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [paymentModalTab, setPaymentModalTab] = useState<'clear_dues' | 'advance'>('clear_dues');
   
   // Payment Form State
   const [amount, setAmount] = useState<number | ''>('');
@@ -76,6 +95,9 @@ export default function Payments() {
   const [chequeDate, setChequeDate] = useState(getTodayString());
   const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
+  const [targetedBill, setTargetedBill] = useState<PartyBillItem | null>(null);
+  const [partyDueBills, setPartyDueBills] = useState<PartyBillItem[]>([]);
+  const [isLoadingDueBills, setIsLoadingDueBills] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [printReportData, setPrintReportData] = useState<PrintableReportData | null>(null);
 
@@ -103,9 +125,9 @@ export default function Payments() {
     }
   }
 
-  const openPaymentModal = (entity: Customer | Supplier) => {
+  const openPaymentModal = async (entity: Customer | Supplier) => {
     setSelectedEntity(entity);
-    setAmount(entity.balance); // Default to full balance
+    setTargetedBill(null);
     setPaymentMode('Cash');
     setChequeNo('');
     setBankName('');
@@ -113,16 +135,96 @@ export default function Payments() {
     setReferenceNo('');
     setNotes('');
     setIsModalOpen(true);
+
+    if (entity.balance > 0) {
+      setPaymentModalTab('clear_dues');
+    } else {
+      setPaymentModalTab('advance');
+    }
+
+    setIsLoadingDueBills(true);
+    try {
+      const type = activeTab === 'suppliers' ? 'supplier' : 'customer';
+      const data = await getPartyProfileData(type, entity.id);
+      const dues = (data.bills || []).filter(b => b.due_amount > 0.001);
+      setPartyDueBills(dues);
+      const totalDue = dues.reduce((sum, b) => sum + (b.due_amount || 0), 0);
+      if (totalDue > 0) {
+        setAmount(Number(totalDue.toFixed(2)));
+        setPaymentModalTab('clear_dues');
+      } else {
+        setAmount('');
+        if (entity.balance <= 0) {
+          setPaymentModalTab('advance');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load due bills in payments', err);
+      setPartyDueBills([]);
+      setAmount(entity.balance > 0 ? Number(entity.balance.toFixed(2)) : '');
+    } finally {
+      setIsLoadingDueBills(false);
+    }
   };
+
+  function handleSelectDueBill(billIdStr: string) {
+    if (!billIdStr) {
+      setTargetedBill(null);
+      setReferenceNo('');
+      setNotes('');
+      const totalDue = partyDueBills.reduce((s, b) => s + (b.due_amount || 0), 0);
+      if (totalDue > 0) {
+        setAmount(Number(totalDue.toFixed(2)));
+      } else if (selectedEntity && selectedEntity.balance > 0) {
+        setAmount(Number(selectedEntity.balance.toFixed(2)));
+      }
+      return;
+    }
+    const bill = partyDueBills.find(b => String(b.id) === billIdStr);
+    if (bill) {
+      setTargetedBill(bill);
+      setReferenceNo(bill.invoice_number || String(bill.id));
+      setAmount(Number(bill.due_amount.toFixed(2)));
+      setNotes(`Payment against Bill #${bill.invoice_number || bill.id}`);
+    }
+  }
+
+  async function handleUseAdvanceToClearDues() {
+    if (!selectedEntity) return;
+    const availableAdvance: number = Number(selectedEntity.advance_balance || 0) > 0 
+      ? Number(selectedEntity.advance_balance) 
+      : (selectedEntity.balance < 0 ? Math.abs(selectedEntity.balance) : 0);
+    const totalDues = partyDueBills.reduce((s, b) => s + (b.due_amount || 0), 0);
+    const amountToApply = Math.min(availableAdvance, totalDues);
+    if (amountToApply <= 0) {
+      alert("No available advance or no open bill dues to clear.");
+      return;
+    }
+
+    const partyRole = activeTab === 'suppliers' ? 'supplier' : 'customer';
+    if (!confirm(`Apply ₹${amountToApply.toFixed(2)} from stored advance credit to clear open bill dues for ${selectedEntity.name}?`)) {
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      const res = await applyAdvanceToClearDues(partyRole, selectedEntity.id, amountToApply);
+      alert(`Successfully cleared ${res.clearedCount} bill(s) using ₹${res.appliedAmount.toFixed(2)} of stored advance!`);
+      setIsModalOpen(false);
+      setTargetedBill(null);
+      setPartyDueBills([]);
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to apply advance: ${err}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
 
   async function handleRecordPayment(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedEntity || amount === '' || amount <= 0) return;
-    
-    if (Number(amount) > selectedEntity.balance + 0.01) {
-      alert(`Payment amount (₹${Number(amount).toFixed(2)}) cannot exceed outstanding balance of ₹${selectedEntity.balance.toFixed(2)}.`);
-      return;
-    }
 
     if (paymentMode === 'Cheque' && !chequeNo.trim()) {
       alert('Please enter the Cheque Number');
@@ -132,16 +234,22 @@ export default function Payments() {
     setIsProcessing(true);
     try {
       const type = activeTab === 'suppliers' ? 'supplier' : 'customer';
+      const defaultNotes = paymentModalTab === 'advance'
+        ? (notes.trim() || `${activeTab === 'customers' ? 'Customer' : 'Supplier'} Advance Deposit`)
+        : (notes.trim() || (targetedBill ? `Payment against Bill #${targetedBill.invoice_number || targetedBill.id}` : 'Payment clearing due bills'));
+
       const res = await recordPayment(
         type, 
         selectedEntity.id, 
         Number(amount), 
         paymentMode, 
         referenceNo, 
-        notes,
+        defaultNotes,
         paymentMode === 'Cheque' ? chequeNo.trim() : null,
         paymentMode === 'Cheque' ? bankName.trim() : null,
-        paymentMode === 'Cheque' ? chequeDate : null
+        paymentMode === 'Cheque' ? chequeDate : null,
+        null,
+        paymentModalTab === 'clear_dues' && targetedBill ? targetedBill.id : null
       );
       
       if (res.isPDC) {
@@ -153,10 +261,16 @@ export default function Payments() {
           `Important: The party's balance remains unchanged until this cheque is cleared in the Cheque Tracker.`
         );
       } else {
-        alert(`Payment of ₹${Number(amount).toFixed(2)} recorded successfully! Balance has been updated.`);
+        if (paymentModalTab === 'advance') {
+          alert(`Advance deposit of ₹${Number(amount).toFixed(2)} recorded and credited to ${selectedEntity.name}'s advance balance!`);
+        } else {
+          alert(`Payment of ₹${Number(amount).toFixed(2)} recorded successfully! Dues cleared.`);
+        }
       }
 
       setIsModalOpen(false);
+      setTargetedBill(null);
+      setPartyDueBills([]);
       await loadData();
     } catch (error) {
       console.error(error);
@@ -635,9 +749,30 @@ export default function Payments() {
                         {entity.phone || entity.email || <span className="italic">N/A</span>}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <span className="font-medium text-ink text-base">
-                          ₹{entity.balance.toFixed(2)}
-                        </span>
+                        {entity.balance > 0 ? (
+                          <div>
+                            <span className="font-bold text-red-600 text-base">
+                              ₹{entity.balance.toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-red-500 font-semibold block">
+                              {activeTab === 'customers' ? 'Due' : 'Payable'}
+                            </span>
+                          </div>
+                        ) : (
+                          <div>
+                            <span className="font-medium text-emerald-600 text-base">
+                              ₹0.00
+                            </span>
+                            <span className="text-[10px] text-muted block">Settled</span>
+                          </div>
+                        )}
+                        {(entity.advance_balance || 0) > 0 && (
+                          <div className="mt-1">
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
+                              Adv: ₹{(entity.advance_balance || 0).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-center">
                         <button 
@@ -728,187 +863,545 @@ export default function Payments() {
         </div>
 
         {/* Payment Modal */}
-        {isModalOpen && selectedEntity && (
-          <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-canvas rounded-lg shadow-xl w-full max-w-lg overflow-hidden border border-hairline animate-in fade-in zoom-in-95 duration-150">
-              <div className="px-6 py-5 border-b border-hairline flex justify-between items-center bg-surface-soft">
-                <div>
-                  <h2 className="text-lg font-medium text-ink">
-                    {activeTab === 'customers' ? 'Receive Customer Payment' : 'Pay Supplier'}
-                  </h2>
-                  <p className="text-sm text-muted mt-0.5">{selectedEntity.name}</p>
-                </div>
-                <button onClick={() => setIsModalOpen(false)} className="text-muted hover:text-ink transition-colors p-1">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <form onSubmit={handleRecordPayment} className="p-6 flex flex-col gap-5 max-h-[85vh] overflow-y-auto">
-                <div className="bg-surface-soft rounded-md p-4 border border-hairline flex justify-between items-center">
-                  <span className="text-sm font-medium text-muted uppercase tracking-wider">Current Outstanding</span>
-                  <span className="text-xl font-display font-medium text-ink">₹{selectedEntity.balance.toFixed(2)}</span>
-                </div>
+        {isModalOpen && selectedEntity && (() => {
+          const availableAdvance = (selectedEntity.advance_balance || 0) > 0 
+            ? (selectedEntity.advance_balance || 0) 
+            : (selectedEntity.balance < 0 ? Math.abs(selectedEntity.balance) : 0);
+          const totalBillsDue = partyDueBills.reduce((sum, b) => sum + (b.due_amount || 0), 0);
 
-                {/* Amount */}
-                <div>
-                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1.5">
-                    Amount (₹) *
-                  </label>
-                  <input 
-                    required 
-                    type="number" 
-                    step="0.01"
-                    min="0.01"
-                    max={selectedEntity.balance}
-                    value={amount} 
-                    onChange={e => setAmount(e.target.value === '' ? '' : Number(e.target.value))} 
-                    className="w-full px-4 py-2.5 bg-canvas border border-hairline rounded-sm focus:outline-none focus:border-ink text-lg font-medium text-ink transition-colors" 
-                    placeholder="0.00" 
-                  />
-                </div>
-
-                {/* Payment Mode Selector */}
-                <div>
-                  <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">
-                    Payment Mode
-                  </label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {(['Cash', 'UPI', 'Bank Transfer', 'Cheque'] as const).map(mode => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setPaymentMode(mode)}
-                        className={`py-2 px-2 text-xs font-medium rounded border transition-colors text-center ${paymentMode === mode ? 'bg-primary text-on-primary border-primary font-semibold shadow-2xs' : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'}`}
-                      >
-                        {mode}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Cheque Specific Fields */}
-                {paymentMode === 'Cheque' && (
-                  <div className="p-4 bg-surface-soft/80 border border-hairline rounded-md flex flex-col gap-3">
-                    <div className="text-xs font-semibold text-ink uppercase tracking-wider flex items-center gap-1.5">
-                      <CreditCard className="w-4 h-4 text-primary" />
-                      Cheque Information
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-medium text-muted uppercase tracking-wider mb-1">
-                          Cheque Number *
-                        </label>
-                        <input
-                          required
-                          type="text"
-                          placeholder="e.g. 004128"
-                          value={chequeNo}
-                          onChange={e => setChequeNo(e.target.value)}
-                          className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm text-sm text-ink focus:outline-none focus:border-ink font-mono"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-medium text-muted uppercase tracking-wider mb-1">
-                          Bank Name
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. HDFC Bank"
-                          value={bankName}
-                          onChange={e => setBankName(e.target.value)}
-                          className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm text-sm text-ink focus:outline-none focus:border-ink"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-medium text-muted uppercase tracking-wider mb-1 flex items-center justify-between">
-                        <span>Cheque Date *</span>
-                        <span className="text-[10px] text-muted normal-case">(Future date = PDC)</span>
-                      </label>
-                      <input
-                        required
-                        type="date"
-                        value={chequeDate}
-                        onChange={e => setChequeDate(e.target.value)}
-                        className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm text-sm text-ink focus:outline-none focus:border-ink"
-                      />
-                    </div>
-
-                    {/* Live Accounting Banner */}
-                    {isPdcDate(chequeDate) ? (
-                      <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-md flex items-start gap-2.5 text-xs text-amber-700 dark:text-amber-300">
-                        <Calendar className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-                        <div>
-                          <span className="font-semibold block">Post-Dated Cheque (PDC)</span>
-                          Cheque date is in the future ({chequeDate}). The party's outstanding balance will <strong>remain unchanged</strong> until deposited and cleared in the Cheque Tracker.
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-md flex items-start gap-2.5 text-xs text-emerald-700 dark:text-emerald-300">
-                        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
-                        <div>
-                          <span className="font-semibold block">Present Date Cheque</span>
-                          Cheque will be marked as <strong>Cleared</strong> immediately. Outstanding balance will be reduced right now.
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Reference No & Notes */}
-                <div className="grid grid-cols-2 gap-3">
+          return (
+            <div className="absolute inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className="bg-canvas rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-hairline animate-in fade-in zoom-in-95 duration-150">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-hairline flex justify-between items-center bg-surface-soft/60">
                   <div>
-                    <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">
-                      Reference No (Optional)
-                    </label>
-                    <input 
-                      type="text" 
-                      placeholder="Transaction / UTR / Memo" 
-                      value={referenceNo} 
-                      onChange={e => setReferenceNo(e.target.value)} 
-                      className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm text-sm text-ink focus:outline-none focus:border-ink" 
-                    />
+                    <h2 className="text-base font-bold text-ink flex items-center gap-2">
+                      <IndianRupee className="w-4 h-4 text-primary" />
+                      {activeTab === 'customers' ? 'Collect from Customer' : 'Pay to Supplier'}
+                    </h2>
+                    <p className="text-xs text-muted mt-0.5">{selectedEntity.name}</p>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-1">
-                      Notes
-                    </label>
-                    <input 
-                      type="text" 
-                      placeholder="Any remarks..." 
-                      value={notes} 
-                      onChange={e => setNotes(e.target.value)} 
-                      className="w-full px-3 py-2 bg-canvas border border-hairline rounded-sm text-sm text-ink focus:outline-none focus:border-ink" 
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-2">
                   <button 
-                    type="submit" 
-                    disabled={isProcessing || amount === '' || amount <= 0 || (paymentMode === 'Cheque' && !chequeNo.trim())}
-                    className={`w-full py-3 rounded-lg font-medium text-base flex items-center justify-center transition-colors
-                      ${isProcessing || amount === '' || amount <= 0 || (paymentMode === 'Cheque' && !chequeNo.trim())
-                        ? 'bg-surface-strong text-muted cursor-not-allowed' 
-                        : 'bg-primary hover:bg-primary-active text-on-primary'}`}
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setTargetedBill(null);
+                    }} 
+                    className="text-muted hover:text-ink transition-colors p-1.5 rounded-lg hover:bg-surface-soft"
                   >
-                    <IndianRupee className="w-4 h-4 mr-2" /> 
-                    {isProcessing 
-                      ? 'Processing...' 
-                      : (paymentMode === 'Cheque' && isPdcDate(chequeDate))
-                        ? 'Record Post-Dated Cheque (PDC)'
-                        : `Record ${activeTab === 'customers' ? 'Receipt' : 'Payment'}`
-                    }
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
-              </form>
+
+                {/* TWO DEDICATED FUNCTION TABS */}
+                <div className="flex border-b border-hairline bg-surface-soft/40 p-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentModalTab('clear_dues');
+                      if (totalBillsDue > 0) setAmount(Number(totalBillsDue.toFixed(2)));
+                    }}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
+                      paymentModalTab === 'clear_dues'
+                        ? 'bg-canvas text-primary border border-hairline shadow-xs font-bold'
+                        : 'text-muted hover:text-ink hover:bg-surface-soft'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>1. Clear Due Bills</span>
+                    {totalBillsDue > 0 && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 font-bold ml-1">
+                        ₹{totalBillsDue.toFixed(0)}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentModalTab('advance');
+                      setTargetedBill(null);
+                      setAmount('');
+                    }}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
+                      paymentModalTab === 'advance'
+                        ? 'bg-canvas text-primary border border-hairline shadow-xs font-bold'
+                        : 'text-muted hover:text-ink hover:bg-surface-soft'
+                    }`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>2. Receive Advance</span>
+                    {availableAdvance > 0 && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold ml-1">
+                        ₹{availableAdvance.toFixed(0)}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                <form onSubmit={handleRecordPayment} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
+                  {paymentModalTab === 'clear_dues' ? (
+                    /* ========================================================= */
+                    /* FUNCTION 1: CLEAR DUE BILLS                               */
+                    /* ========================================================= */
+                    <>
+                      {/* Dues & Stored Advance Status Cards */}
+                      {availableAdvance > 0 && totalBillsDue > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="p-3.5 rounded-xl bg-surface-soft/60 border border-hairline flex items-center justify-between">
+                            <div>
+                              <span className="text-xs text-muted font-medium block">Total Unpaid Bill Dues</span>
+                              <span className="text-[11px] text-muted/70">
+                                {partyDueBills.length} pending bill{partyDueBills.length > 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <span className="font-bold font-display text-lg text-red-600">
+                              ₹{totalBillsDue.toFixed(2)}
+                            </span>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
+                            <div>
+                              <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 block">
+                                Stored Advance
+                              </span>
+                              <span className="text-base font-bold font-display text-emerald-600 dark:text-emerald-400">
+                                ₹{availableAdvance.toFixed(2)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleUseAdvanceToClearDues}
+                              disabled={isProcessing}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition-colors shrink-0 ml-2"
+                            >
+                              Apply (₹{Math.min(availableAdvance, totalBillsDue).toFixed(2)})
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-3.5 rounded-xl bg-surface-soft/60 border border-hairline flex items-center justify-between">
+                          <div>
+                            <span className="text-xs text-muted font-medium block">Total Unpaid Bill Dues</span>
+                            <span className="text-[11px] text-muted/70">
+                              {partyDueBills.length > 0
+                                ? `Across ${partyDueBills.length} pending bill${partyDueBills.length > 1 ? 's' : ''}`
+                                : 'No pending unpaid bills'}
+                            </span>
+                          </div>
+                          <span
+                            className={`font-bold font-display text-lg ${
+                              totalBillsDue > 0 ? 'text-red-600' : 'text-emerald-600'
+                            }`}
+                          >
+                            ₹{totalBillsDue.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Target Specific Bill (Optional) */}
+                      {isLoadingDueBills ? (
+                        <div className="text-xs text-muted italic flex items-center gap-1.5 py-2">
+                          <div className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                          <span>Loading pending bills...</span>
+                        </div>
+                      ) : partyDueBills.length > 0 && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-semibold text-muted uppercase tracking-wider">
+                              Bills to Clear (Oldest Cleared First)
+                            </label>
+                            <span className="text-xs font-medium text-muted">
+                              {partyDueBills.length} unpaid bill{partyDueBills.length > 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          {partyDueBills.length <= 3 ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSelectDueBill('')}
+                                className={`p-3 rounded-xl text-left border transition-all ${
+                                  !targetedBill
+                                    ? 'bg-primary text-on-primary border-primary font-semibold shadow-xs'
+                                    : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-xs sm:text-sm">Clear One-by-One</span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${!targetedBill ? 'bg-white/20 text-white' : 'bg-surface-soft text-muted'}`}>
+                                    Auto FIFO
+                                  </span>
+                                </div>
+                                <div className={`text-xs mt-1 ${!targetedBill ? 'text-on-primary/80' : 'text-muted'}`}>
+                                  Clears all unpaid bills chronologically
+                                </div>
+                              </button>
+                              {partyDueBills.map(bill => {
+                                const isSelected = targetedBill?.id === bill.id;
+                                return (
+                                  <button
+                                    key={bill.id}
+                                    type="button"
+                                    onClick={() => handleSelectDueBill(isSelected ? '' : String(bill.id))}
+                                    className={`p-3 rounded-xl text-left border transition-all ${
+                                      isSelected
+                                        ? 'bg-primary text-on-primary border-primary font-semibold shadow-xs'
+                                        : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-bold text-xs sm:text-sm">Bill #{bill.invoice_number || bill.id}</span>
+                                      <span className={`text-xs sm:text-sm font-bold ${isSelected ? 'text-on-primary' : 'text-red-600'}`}>
+                                        Due: ₹{bill.due_amount.toFixed(2)}
+                                      </span>
+                                    </div>
+                                    <div className={`flex items-center justify-between text-xs mt-1 ${isSelected ? 'text-on-primary/80' : 'text-muted'}`}>
+                                      <span>Date: {bill.date ? bill.date.split(' ')[0] : 'N/A'}</span>
+                                      <span>Total: ₹{bill.net_amount.toFixed(2)}</span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <select
+                              value={targetedBill ? String(targetedBill.id) : ''}
+                              onChange={e => handleSelectDueBill(e.target.value)}
+                              className="w-full px-3 py-2 bg-canvas border border-hairline focus:border-primary rounded-xl text-xs sm:text-sm font-medium text-ink transition-colors cursor-pointer"
+                            >
+                              <option value="">Clear All Bills One-by-One (FIFO — Clears oldest dues automatically)</option>
+                              {partyDueBills.map(bill => (
+                                <option key={bill.id} value={String(bill.id)}>
+                                  Bill #{bill.invoice_number || bill.id} • Due: ₹{bill.due_amount.toFixed(2)} (Total: ₹{bill.net_amount.toFixed(2)} • Date: {bill.date ? bill.date.split(' ')[0] : 'N/A'})
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Amount to Pay & Payment Mode in 2 Balanced Columns */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
+                              Amount Received (₹) *
+                            </label>
+                            {totalBillsDue > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTargetedBill(null);
+                                  setAmount(Number(totalBillsDue.toFixed(2)));
+                                }}
+                                className="text-[11px] font-semibold text-primary hover:underline"
+                              >
+                                Pay Full Dues (₹{totalBillsDue.toFixed(2)})
+                              </button>
+                            )}
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">₹</span>
+                            <input
+                              required
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={amount}
+                              onChange={e => setAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                              className="w-full pl-7 pr-3 py-2 bg-canvas border border-hairline rounded-xl text-sm font-bold font-display text-ink focus:outline-none focus:border-primary transition-colors"
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                            Payment Mode
+                          </label>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {(['Cash', 'UPI', 'Bank Transfer', 'Cheque'] as const).map(mode => (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => setPaymentMode(mode)}
+                                className={`py-2 px-1 rounded-xl text-xs font-semibold border text-center transition-all ${
+                                  paymentMode === mode
+                                    ? 'bg-primary text-on-primary border-primary shadow-xs'
+                                    : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'
+                                }`}
+                              >
+                                {mode === 'Bank Transfer' ? 'Bank' : mode}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Cheque Specific Fields */}
+                      {paymentMode === 'Cheque' && (
+                        <div className="p-3.5 rounded-xl bg-surface-soft/50 border border-hairline space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-muted uppercase mb-1">Cheque No *</label>
+                              <input
+                                required
+                                type="text"
+                                value={chequeNo}
+                                onChange={e => setChequeNo(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-canvas border border-hairline rounded-lg text-xs text-ink"
+                                placeholder="e.g. 402911"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-muted uppercase mb-1">Bank Name</label>
+                              <input
+                                required
+                                type="text"
+                                value={bankName}
+                                onChange={e => setBankName(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-canvas border border-hairline rounded-lg text-xs text-ink"
+                                placeholder="e.g. HDFC Bank"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-muted uppercase mb-1">Cheque Due Date *</label>
+                              <input
+                                required
+                                type="date"
+                                value={chequeDate}
+                                onChange={e => setChequeDate(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-canvas border border-hairline rounded-lg text-xs text-ink"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Live Accounting Banner */}
+                          {isPdcDate(chequeDate) ? (
+                            <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                              <Calendar className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                              <div>
+                                <span className="font-semibold block">Post-Dated Cheque (PDC)</span>
+                                Cheque date is in the future ({chequeDate}). Dues will remain until cleared in the Cheque Tracker.
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg flex items-start gap-2 text-xs text-emerald-700 dark:text-emerald-300">
+                              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                              <div>
+                                <span className="font-semibold block">Present Date Cheque</span>
+                                Cheque is marked as Cleared immediately and dues are cleared now.
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Reference / Transaction No & Notes in 2 Columns */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                            Reference / Transaction No <span className="text-[11px] text-muted normal-case font-normal">(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={referenceNo}
+                            onChange={e => setReferenceNo(e.target.value)}
+                            className="w-full px-3 py-2 bg-canvas border border-hairline rounded-xl text-xs text-ink placeholder-muted focus:outline-none focus:border-primary transition-colors"
+                            placeholder="e.g. UPI Ref / UTR / Cheque No / Memo"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                            Notes / Remarks <span className="text-[11px] text-muted normal-case font-normal">(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={notes}
+                            onChange={e => setNotes(e.target.value)}
+                            className="w-full px-3 py-2 bg-canvas border border-hairline rounded-xl text-xs text-ink placeholder-muted focus:outline-none focus:border-primary transition-colors"
+                            placeholder="e.g. Part payment against pending bills"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    /* ========================================================= */
+                    /* FUNCTION 2: RECEIVE ADVANCE DEPOSIT                       */
+                    /* ========================================================= */
+                    <>
+                      {/* Current Advance Status Card */}
+                      <div className="p-3.5 rounded-xl bg-surface-soft/60 border border-hairline flex items-center justify-between">
+                        <div>
+                          <span className="text-xs text-muted font-medium block">Current Stored Advance Balance</span>
+                          <span className="text-[11px] text-muted/70">
+                            Money received here is stored as advance credit to clear future bills.
+                          </span>
+                        </div>
+                        <span className="text-lg font-bold font-display text-emerald-600">
+                          ₹{availableAdvance.toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Advance Amount & Payment Mode in 2 Balanced Columns */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
+                              Advance Amount (₹) *
+                            </label>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted font-bold text-sm">₹</span>
+                            <input
+                              required
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={amount}
+                              onChange={e => setAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                              className="w-full pl-7 pr-3 py-2 bg-canvas border border-hairline rounded-xl text-sm font-bold font-display text-ink focus:outline-none focus:border-primary transition-colors"
+                              placeholder="0.00"
+                            />
+                          </div>
+                          {/* Quick Preset Buttons */}
+                          <div className="flex gap-1.5 mt-2">
+                            {[500, 1000, 2000, 5000].map(val => (
+                              <button
+                                key={val}
+                                type="button"
+                                onClick={() => setAmount(val)}
+                                className="flex-1 py-1 px-1 rounded-lg text-xs bg-surface-soft hover:bg-surface-soft/80 border border-hairline text-ink font-semibold transition-colors text-center"
+                              >
+                                +₹{val}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                            Payment Mode
+                          </label>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {(['Cash', 'UPI', 'Bank Transfer', 'Cheque'] as const).map(mode => (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => setPaymentMode(mode)}
+                                className={`py-2 px-1 rounded-xl text-xs font-semibold border text-center transition-all ${
+                                  paymentMode === mode
+                                    ? 'bg-primary text-on-primary border-primary shadow-xs'
+                                    : 'bg-canvas text-ink border-hairline hover:bg-surface-soft'
+                                }`}
+                              >
+                                {mode === 'Bank Transfer' ? 'Bank' : mode}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Cheque Specific Fields */}
+                      {paymentMode === 'Cheque' && (
+                        <div className="p-3.5 rounded-xl bg-surface-soft/50 border border-hairline space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-[10px] font-semibold text-muted uppercase mb-1">Cheque No *</label>
+                              <input
+                                required
+                                type="text"
+                                value={chequeNo}
+                                onChange={e => setChequeNo(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-canvas border border-hairline rounded-lg text-xs text-ink"
+                                placeholder="e.g. 402911"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-muted uppercase mb-1">Bank Name</label>
+                              <input
+                                required
+                                type="text"
+                                value={bankName}
+                                onChange={e => setBankName(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-canvas border border-hairline rounded-lg text-xs text-ink"
+                                placeholder="e.g. HDFC Bank"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold text-muted uppercase mb-1">Cheque Due Date *</label>
+                              <input
+                                required
+                                type="date"
+                                value={chequeDate}
+                                onChange={e => setChequeDate(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-canvas border border-hairline rounded-lg text-xs text-ink"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Reference / Transaction No & Notes in 2 Columns */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                            Reference / Transaction No <span className="text-[11px] text-muted normal-case font-normal">(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={referenceNo}
+                            onChange={e => setReferenceNo(e.target.value)}
+                            className="w-full px-3 py-2 bg-canvas border border-hairline rounded-xl text-xs text-ink placeholder-muted focus:outline-none focus:border-primary transition-colors"
+                            placeholder="e.g. UPI Ref / Cash receipt / Memo"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
+                            Notes / Remarks <span className="text-[11px] text-muted normal-case font-normal">(Optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={notes}
+                            onChange={e => setNotes(e.target.value)}
+                            className="w-full px-3 py-2 bg-canvas border border-hairline rounded-xl text-xs text-ink placeholder-muted focus:outline-none focus:border-primary transition-colors"
+                            placeholder="e.g. Advance deposit for upcoming orders"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="pt-3 border-t border-hairline flex justify-end gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsModalOpen(false);
+                        setTargetedBill(null);
+                      }}
+                      className="px-4 py-2 text-xs font-medium text-ink hover:bg-surface-soft rounded-xl transition-colors border border-hairline"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isProcessing || amount === '' || amount <= 0 || (paymentMode === 'Cheque' && !chequeNo.trim())}
+                      className="px-5 py-2 text-xs font-semibold bg-primary hover:bg-primary-active text-on-primary rounded-xl shadow-sm transition-colors disabled:opacity-50"
+                    >
+                      {isProcessing
+                        ? 'Saving...'
+                        : paymentModalTab === 'advance'
+                        ? `Record Advance (₹${typeof amount === 'number' ? amount.toFixed(2) : '0.00'})`
+                        : `Record & Clear Dues (₹${typeof amount === 'number' ? amount.toFixed(2) : '0.00'})`}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </>
   );
