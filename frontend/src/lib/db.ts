@@ -1,93 +1,320 @@
 import Database from '@tauri-apps/plugin-sql';
+import { invoke } from '@tauri-apps/api/core';
+import { getActiveCompanyDbName, getActiveCompany } from './companies';
 
+let currentDbUrl: string | null = null;
 let dbInstance: Database | null = null;
 let dbLoadPromise: Promise<Database> | null = null;
 
-// Always loads the local, offline SQLite file (inventory.db)
+export function resetDbInstance() {
+  dbInstance = null;
+  dbLoadPromise = null;
+  currentDbUrl = null;
+}
+
+export async function closeDbConnection(): Promise<void> {
+  try {
+    if (dbInstance) {
+      await dbInstance.close();
+    }
+  } catch (e) {
+    console.warn('Error closing database instance:', e);
+  } finally {
+    resetDbInstance();
+  }
+}
+
+async function initDatabaseSchema(db: Database) {
+  try {
+    // 1. Core tables
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        barcode TEXT UNIQUE,
+        description TEXT,
+        category_id INTEGER,
+        brand_id INTEGER,
+        group_id INTEGER,
+        model TEXT,
+        hsn_code TEXT,
+        purchase_price REAL DEFAULT 0,
+        selling_price REAL NOT NULL,
+        mrp REAL DEFAULT 0,
+        unit TEXT DEFAULT 'Piece',
+        min_stock INTEGER DEFAULT 0,
+        gst_rate REAL DEFAULT 0,
+        stock_quantity INTEGER DEFAULT 0
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS brands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS item_groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        contact_info TEXT,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        gstin TEXT,
+        balance REAL DEFAULT 0,
+        advance_balance REAL DEFAULT 0
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        gstin TEXT,
+        balance REAL DEFAULT 0,
+        advance_balance REAL DEFAULT 0
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        total_amount REAL NOT NULL,
+        tax_amount REAL NOT NULL,
+        discount REAL DEFAULT 0,
+        net_amount REAL NOT NULL,
+        paid_amount REAL DEFAULT 0,
+        status TEXT DEFAULT 'Paid',
+        payment_method TEXT,
+        invoice_number TEXT,
+        customer_snapshot TEXT,
+        source_type TEXT DEFAULT 'shop',
+        source_warehouse_id INTEGER,
+        dispatch_details TEXT
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS sale_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sale_id INTEGER NOT NULL,
+        product_id INTEGER,
+        quantity INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        tax REAL NOT NULL,
+        item_source_type TEXT DEFAULT 'shop',
+        item_warehouse_id INTEGER
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS purchases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        supplier_id INTEGER NOT NULL,
+        invoice_number TEXT,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        total_amount REAL NOT NULL,
+        tax_amount REAL NOT NULL,
+        discount REAL DEFAULT 0,
+        net_amount REAL NOT NULL,
+        paid_amount REAL DEFAULT 0,
+        status TEXT DEFAULT 'Paid',
+        destination_type TEXT DEFAULT 'shop',
+        destination_warehouse_id INTEGER
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS purchase_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        purchase_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        purchase_rate REAL NOT NULL,
+        tax REAL DEFAULT 0
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        amount REAL NOT NULL,
+        payment_mode TEXT NOT NULL,
+        reference_no TEXT,
+        notes TEXT,
+        cheque_no TEXT,
+        bank_name TEXT,
+        cheque_date TEXT,
+        cheque_status TEXT DEFAULT 'cleared',
+        is_advance INTEGER DEFAULT 0
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        amount REAL NOT NULL,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        description TEXT
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS returns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        reason TEXT
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS quotations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quotation_number TEXT UNIQUE,
+        customer_id INTEGER,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        total_amount REAL NOT NULL,
+        tax_amount REAL NOT NULL,
+        discount REAL NOT NULL,
+        net_amount REAL NOT NULL,
+        status TEXT DEFAULT 'Pending',
+        converted_sale_id INTEGER,
+        converted_invoice_no TEXT,
+        customer_snapshot TEXT,
+        notes TEXT
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS quotation_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quotation_id INTEGER NOT NULL,
+        product_id INTEGER,
+        quantity INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        tax REAL NOT NULL,
+        unit TEXT,
+        product_snapshot TEXT
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS warehouses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        location TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS warehouse_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        warehouse_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER DEFAULT 0,
+        UNIQUE(warehouse_id, product_id)
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        source_type TEXT NOT NULL,
+        source_id INTEGER,
+        dest_type TEXT NOT NULL,
+        dest_id INTEGER,
+        quantity INTEGER NOT NULL,
+        date TEXT DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        pin TEXT NOT NULL,
+        role TEXT NOT NULL,
+        permissions TEXT DEFAULT '["/","/pos","/purchases","/payments","/expenses","/returns","/reports","/inventory","/contacts","/staff","/settings"]'
+      );
+    `);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+
+    // Ensure machine license / activation expiry is carried over to this company database
+    const storedExpiry = localStorage.getItem('activation_expiry');
+    if (storedExpiry) {
+      try {
+        await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', storedExpiry]);
+      } catch (e) {}
+    }
+
+    // Ensure default Admin user exists in this database
+    const activeComp = getActiveCompany();
+    const adminPin = activeComp.adminPin || '1234';
+    try {
+      await db.execute(
+        `INSERT OR IGNORE INTO users (username, pin, role, permissions) 
+         VALUES ('Admin', $1, 'admin', '["/","/pos","/purchases","/payments","/expenses","/returns","/reports","/inventory","/contacts","/staff","/settings"]')`,
+        [adminPin]
+      );
+    } catch (e) {}
+
+    // Column additions if older tables exist without newer columns
+    try { await db.execute('ALTER TABLE products ADD COLUMN group_id INTEGER'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN brand_id INTEGER'); } catch (e) {}
+    try { await db.execute('ALTER TABLE payments ADD COLUMN cheque_no TEXT'); } catch (e) {}
+    try { await db.execute('ALTER TABLE payments ADD COLUMN bank_name TEXT'); } catch (e) {}
+    try { await db.execute('ALTER TABLE payments ADD COLUMN cheque_date TEXT'); } catch (e) {}
+    try { await db.execute("ALTER TABLE payments ADD COLUMN cheque_status TEXT DEFAULT 'cleared'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE payments ADD COLUMN is_advance INTEGER DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN destination_type TEXT DEFAULT 'shop'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN destination_warehouse_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN source_type TEXT DEFAULT 'shop'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN source_warehouse_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN dispatch_details TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE customers ADD COLUMN advance_balance REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE suppliers ADD COLUMN advance_balance REAL DEFAULT 0"); } catch (e) {}
+  } catch (e) {
+    console.error("Error initializing database schema:", e);
+  }
+}
+
+// Loads the active business / company SQLite database file
 export async function getDb() {
+  const activeDbUrl = getActiveCompanyDbName();
+  if (dbInstance && currentDbUrl !== activeDbUrl) {
+    resetDbInstance();
+  }
   if (dbInstance) return dbInstance;
   if (!dbLoadPromise) {
-    dbLoadPromise = Database.load('sqlite:inventory.db').then(async (db) => {
+    currentDbUrl = activeDbUrl;
+    dbLoadPromise = Database.load(activeDbUrl).then(async (db) => {
       dbInstance = db;
-      
-      // Force create tables if migrations failed
-      try {
-        await db.execute(`
-          CREATE TABLE IF NOT EXISTS item_groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-          );
-        `);
-        await db.execute(`
-          CREATE TABLE IF NOT EXISTS brands (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-          );
-        `);
-        await db.execute(`
-          CREATE TABLE IF NOT EXISTS quotations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quotation_number TEXT UNIQUE,
-            customer_id INTEGER,
-            date TEXT DEFAULT CURRENT_TIMESTAMP,
-            total_amount REAL NOT NULL,
-            tax_amount REAL NOT NULL,
-            discount REAL NOT NULL,
-            net_amount REAL NOT NULL,
-            status TEXT DEFAULT 'Pending',
-            converted_sale_id INTEGER,
-            converted_invoice_no TEXT,
-            customer_snapshot TEXT,
-            notes TEXT
-          );
-        `);
-        await db.execute(`
-          CREATE TABLE IF NOT EXISTS quotation_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quotation_id INTEGER NOT NULL,
-            product_id INTEGER,
-            quantity INTEGER NOT NULL,
-            unit_price REAL NOT NULL,
-            tax REAL NOT NULL,
-            unit TEXT,
-            product_snapshot TEXT
-          );
-        `);
-        // Ignore errors for ADD COLUMN as they might already exist
-        try { await db.execute('ALTER TABLE products ADD COLUMN group_id INTEGER'); } catch (e) {}
-        try { await db.execute('ALTER TABLE products ADD COLUMN brand_id INTEGER'); } catch (e) {}
-
-        // Ensure all GST numbers in customers and suppliers are uppercase
-        try {
-          await db.execute("UPDATE customers SET gstin = UPPER(TRIM(gstin)) WHERE gstin IS NOT NULL");
-          await db.execute("UPDATE suppliers SET gstin = UPPER(TRIM(gstin)) WHERE gstin IS NOT NULL");
-        } catch (e) {}
-
-        // Ensure cheque columns exist in payments table
-        try { await db.execute('ALTER TABLE payments ADD COLUMN cheque_no TEXT'); } catch (e) {}
-        try { await db.execute('ALTER TABLE payments ADD COLUMN bank_name TEXT'); } catch (e) {}
-        try { await db.execute('ALTER TABLE payments ADD COLUMN cheque_date TEXT'); } catch (e) {}
-        try { await db.execute("ALTER TABLE payments ADD COLUMN cheque_status TEXT DEFAULT 'cleared'"); } catch (e) {}
-
-        // Ensure purchase destination columns exist in purchases table
-        try { await db.execute("ALTER TABLE purchases ADD COLUMN destination_type TEXT DEFAULT 'shop'"); } catch (e) {}
-        try { await db.execute("ALTER TABLE purchases ADD COLUMN destination_warehouse_id INTEGER"); } catch (e) {}
-
-        // Ensure sales source columns exist in sales table
-        try { await db.execute("ALTER TABLE sales ADD COLUMN source_type TEXT DEFAULT 'shop'"); } catch (e) {}
-        try { await db.execute("ALTER TABLE sales ADD COLUMN source_warehouse_id INTEGER"); } catch (e) {}
-        try { await db.execute("ALTER TABLE sales ADD COLUMN dispatch_details TEXT"); } catch (e) {}
-
-        // Ensure advance_balance exists in customers and suppliers
-        try { await db.execute("ALTER TABLE customers ADD COLUMN advance_balance REAL DEFAULT 0"); } catch (e) {}
-        try { await db.execute("ALTER TABLE suppliers ADD COLUMN advance_balance REAL DEFAULT 0"); } catch (e) {}
-      } catch (e) {
-        console.error("Error creating tables manually:", e);
-      }
-      
+      await initDatabaseSchema(db);
       return db;
     }).catch(err => {
       dbLoadPromise = null;
+      currentDbUrl = null;
       throw err;
     });
   }
@@ -379,7 +606,8 @@ export async function recordSale(
   sourceType: 'shop' | 'warehouse' = 'shop',
   sourceWarehouseId: number | null = null,
   saleDate?: string | null,
-  dispatchDetails?: DispatchDetails | null
+  dispatchDetails?: DispatchDetails | null,
+  taxMethodOverride?: 'exclusive' | 'inclusive'
 ) {
   const db = await getDb();
   
@@ -423,7 +651,7 @@ export async function recordSale(
   let originalPriceBasis = 0;
   cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
   const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
+  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
   for (const item of cart) {
     const originalItemPrice = item.selling_price * item.cart_qty;
@@ -729,7 +957,8 @@ export async function createQuotation(
   netAmount: number,
   customerId: number | null,
   notes: string = '',
-  quotationDate?: string | null
+  quotationDate?: string | null,
+  taxMethodOverride?: 'exclusive' | 'inclusive'
 ): Promise<string> {
   const db = await getDb();
   
@@ -759,7 +988,7 @@ export async function createQuotation(
   let originalPriceBasis = 0;
   cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
   const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
+  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
   for (const item of cart) {
     const originalItemPrice = item.selling_price * item.cart_qty;
@@ -800,7 +1029,8 @@ export async function updateQuotation(
   netAmount: number,
   customerId: number | null,
   notes: string = '',
-  quotationDate?: string | null
+  quotationDate?: string | null,
+  taxMethodOverride?: 'exclusive' | 'inclusive'
 ): Promise<string> {
   const db = await getDb();
   
@@ -830,7 +1060,7 @@ export async function updateQuotation(
   let originalPriceBasis = 0;
   cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
   const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
+  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
   for (const item of cart) {
     const originalItemPrice = item.selling_price * item.cart_qty;
@@ -945,7 +1175,7 @@ export async function getSaleById(id: number): Promise<any> {
   if (sales.length === 0) return null;
   const sale = sales[0];
   const items = await db.select<any[]>(
-    `SELECT si.*, p.stock_quantity as shop_stock
+    `SELECT si.*, p.stock_quantity as shop_stock, p.name as prod_name, p.model as prod_model, p.hsn_code as prod_hsn, p.unit as prod_unit, p.gst_percentage as prod_gst, p.cgst_percentage as prod_cgst, p.sgst_percentage as prod_sgst
      FROM sale_items si 
      LEFT JOIN products p ON si.product_id = p.id
      WHERE si.sale_id = $1`, 
@@ -975,12 +1205,13 @@ export async function getSaleById(id: number): Promise<any> {
 
     return {
       ...item,
-      name: snap.name || 'Unknown',
-      model: snap.model || '',
-      hsn_code: snap.hsn_code || '',
-      gst_percentage: snap.gst_percentage || 0,
-      cgst_percentage: snap.cgst_percentage || 0,
-      sgst_percentage: snap.sgst_percentage || 0,
+      name: snap.name || item.prod_name || 'Unknown',
+      model: snap.model || item.prod_model || '',
+      hsn_code: snap.hsn_code || item.prod_hsn || '',
+      unit: item.unit || item.prod_unit || 'Nos',
+      gst_percentage: snap.gst_percentage ?? item.prod_gst ?? 0,
+      cgst_percentage: snap.cgst_percentage ?? item.prod_cgst ?? 0,
+      sgst_percentage: snap.sgst_percentage ?? item.prod_sgst ?? 0,
       item_source_type: itemSrcType,
       item_warehouse_id: itemWhId,
       item_warehouse_name: snap.source_warehouse_name || sale.source_warehouse_name || (itemSrcType === 'shop' ? 'Main Shop' : 'Godown'),
@@ -1017,7 +1248,8 @@ export async function updateSaleBill(
   sourceType: 'shop' | 'warehouse' = 'shop',
   sourceWarehouseId: number | null = null,
   saleDate?: string | null,
-  dispatchDetails?: DispatchDetails | null
+  dispatchDetails?: DispatchDetails | null,
+  taxMethodOverride?: 'exclusive' | 'inclusive'
 ) {
   const db = await getDb();
   
@@ -1106,7 +1338,7 @@ export async function updateSaleBill(
   let originalPriceBasis = 0;
   cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
   const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
+  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
   // 6. Insert new items and update stock
   for (const item of cart) {
@@ -3439,7 +3671,7 @@ export async function getSalesReport(startDate: string, endDate: string): Promis
   return await db.select(
     `SELECT s.id, s.date, s.invoice_number, c.name as customer_name, s.net_amount, s.tax_amount, s.discount, s.payment_method, s.status,
      s.source_type, s.source_warehouse_id, w.name as source_warehouse_name,
-     (SELECT GROUP_CONCAT(p.name || ' x' || si.quantity || ' (₹' || CAST(si.unit_price AS TEXT) || ' / ' || COALESCE(si.unit, p.unit) || ')', char(10)) FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = s.id) as products_bought,
+     (SELECT GROUP_CONCAT(COALESCE(JSON_EXTRACT(si.product_snapshot, '$.name'), p.name, 'Item') || ' x' || si.quantity || ' (₹' || CAST(si.unit_price AS TEXT) || ' / ' || COALESCE(si.unit, p.unit, 'Nos') || ')', char(10)) FROM sale_items si LEFT JOIN products p ON si.product_id = p.id WHERE si.sale_id = s.id) as products_bought,
      (SELECT SUM(si.quantity) FROM sale_items si WHERE si.sale_id = s.id) as total_quantity
      FROM sales s 
      LEFT JOIN customers c ON s.customer_id = c.id 
@@ -3730,7 +3962,7 @@ export async function getSaleDetails(query: string): Promise<TransactionDetail[]
     const items = await db.select<{product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, tax: number, product_snapshot: string | null, returned_quantity: number}[]>(
       `SELECT si.product_id, p.name, p.model, si.quantity, si.unit_price, si.unit, p.hsn_code, p.cgst_percentage, p.sgst_percentage, p.gst_percentage, COALESCE(si.tax, 0) as tax, si.product_snapshot,
        COALESCE((SELECT SUM(r.quantity) FROM returns r WHERE r.transaction_id = si.sale_id AND r.product_id = si.product_id AND r.entity_type = 'customer'), 0) as returned_quantity
-       FROM sale_items si JOIN products p ON si.product_id = p.id
+       FROM sale_items si LEFT JOIN products p ON si.product_id = p.id
        WHERE si.sale_id = $1`,
       [s.id]
     );
@@ -3890,32 +4122,160 @@ export async function getPurchaseById(id: number): Promise<TransactionDetail | n
   };
 }
 
+export interface ClockTamperStatus {
+  isTampered: boolean;
+  reason?: string;
+}
+
+export async function checkClockTampering(): Promise<ClockTamperStatus> {
+  try {
+    const nowMs = Date.now();
+    const leewayMs = 15 * 60 * 1000; // 15 minutes leeway for minor sync differences
+
+    // 1. Check Windows system files via native Rust backend (winevt System logs & Recent)
+    try {
+      const res = await invoke<{
+        is_tampered: boolean;
+        current_timestamp_secs: number;
+        max_file_timestamp_secs: number;
+        detected_file: string;
+      }>('check_system_clock_tamper');
+
+      if (res && res.is_tampered) {
+        const fileDate = new Date(res.max_file_timestamp_secs * 1000);
+        return {
+          isTampered: true,
+          reason: `Clock rollback detected: Your computer date (${new Date().toLocaleDateString()}) is earlier than Windows system activity on ${fileDate.toLocaleDateString()} ${fileDate.toLocaleTimeString()}.`
+        };
+      }
+    } catch (err) {
+      console.warn("Native clock tamper check unavailable:", err);
+    }
+
+    // 2. Check maximum transaction date in SQLite database (sales, purchases, expenses)
+    try {
+      const db = await getDb();
+      const maxTxRows = await db.select<{ max_date: string | null }[]>(`
+        SELECT MAX(date) as max_date FROM (
+          SELECT MAX(date) as date FROM sales
+          UNION ALL
+          SELECT MAX(date) as date FROM purchases
+          UNION ALL
+          SELECT MAX(date) as date FROM expenses
+        )
+      `);
+
+      if (maxTxRows.length > 0 && maxTxRows[0].max_date) {
+        const maxTxDate = new Date(maxTxRows[0].max_date.replace(' ', 'T'));
+        if (!isNaN(maxTxDate.getTime()) && nowMs + leewayMs < maxTxDate.getTime()) {
+          return {
+            isTampered: true,
+            reason: `Clock rollback detected: Your computer date (${new Date().toLocaleDateString()}) is earlier than your recorded bills/transactions on ${maxTxDate.toLocaleDateString()}.`
+          };
+        }
+      }
+    } catch (dbErr) {
+      console.warn("DB transaction clock check error:", dbErr);
+    }
+
+    return { isTampered: false };
+  } catch (e: any) {
+    console.error("checkClockTampering error:", e);
+    return { isTampered: false };
+  }
+}
+
+export function calculateNextMarch31Expiry(): string {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth(); // Jan=0, Feb=1, Mar=2, Apr=3...
+  
+  // If in April-December (month >= 3) or late March (month === 2), renew for next year's March 31st
+  // If in Jan-Feb (month < 2), expires March 31st of the current year
+  const targetYear = (currentMonth >= 2) ? currentYear + 1 : currentYear;
+  // March 31st at 23:59:59.999 local time
+  const expiry = new Date(targetYear, 2, 31, 23, 59, 59, 999);
+  return expiry.toISOString();
+}
+
 export async function isAppActivated(): Promise<boolean> {
   try {
+    // 0. Check clock tampering (Windows files & DB transaction history)
+    const tamper = await checkClockTampering();
+    if (tamper.isTampered) {
+      console.warn("Clock tampering detected:", tamper.reason);
+      (window as any).__clockTamperReason = tamper.reason;
+      return false;
+    } else {
+      (window as any).__clockTamperReason = null;
+    }
+
+    // 1. Check machine-level license in localStorage first
+    const storedExpiry = localStorage.getItem('activation_expiry');
+    if (storedExpiry) {
+      const expiryDate = new Date(storedExpiry);
+      if (expiryDate.getTime() > Date.now()) {
+        return true;
+      }
+    }
+
+    // 2. Check the active database settings table
     const db = await getDb();
     const result = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
     if (result.length > 0) {
       const expiryDate = new Date(result[0].value);
-      const isValid = expiryDate > new Date();
-      if (!isValid) alert("License expired. Expiry: " + result[0].value);
-      return isValid;
+      const isValid = expiryDate.getTime() > Date.now();
+      if (isValid) {
+        localStorage.setItem('activation_expiry', result[0].value);
+        return true;
+      }
     }
     
-    // Fallback for previous 'is_activated' key before 1-year expiry feature was added
+    // 3. Fallback for legacy 'is_activated' key
     const legacyResult = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['is_activated']);
-    return legacyResult.length > 0 && legacyResult[0].value === 'true';
+    if (legacyResult.length > 0 && legacyResult[0].value === 'true') {
+      return true;
+    }
+
+    // 4. If current DB is a secondary company, check the primary database (inventory.db)
+    const activeCompDb = getActiveCompanyDbName();
+    if (activeCompDb !== 'sqlite:inventory.db') {
+      try {
+        const defaultDb = await Database.load('sqlite:inventory.db');
+        const defResult = await defaultDb.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
+        if (defResult.length > 0) {
+          const expiryDate = new Date(defResult[0].value);
+          const isValid = expiryDate.getTime() > Date.now();
+          if (isValid) {
+            localStorage.setItem('activation_expiry', defResult[0].value);
+            await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', defResult[0].value]);
+            return true;
+          }
+        }
+        const defLegacy = await defaultDb.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['is_activated']);
+        if (defLegacy.length > 0 && defLegacy[0].value === 'true') {
+          return true;
+        }
+      } catch (e) {}
+    }
+
+    return false;
   } catch (e: any) {
     console.error("isAppActivated error:", e);
+    const storedExpiry = localStorage.getItem('activation_expiry');
+    if (storedExpiry && new Date(storedExpiry).getTime() > Date.now()) {
+      return true;
+    }
     return false;
   }
 }
 
 export async function activateApp(): Promise<void> {
   const db = await getDb();
-  const expiry = new Date();
-  expiry.setMonth(expiry.getMonth() + 6);
-  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', expiry.toISOString()]);
-  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['is_activated', 'false']); // Remove legacy permanent activation
+  const expiryStr = calculateNextMarch31Expiry();
+  localStorage.setItem('activation_expiry', expiryStr);
+  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', expiryStr]);
+  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['is_activated', 'false']);
 }
 
 export async function wipeAllData(): Promise<void> {

@@ -7,7 +7,6 @@ import {
   Users, 
   Database, 
   Sliders, 
-  Download, 
   Upload, 
   AlertTriangle, 
   Trash2, 
@@ -18,16 +17,34 @@ import {
   Phone,
   MapPin,
   CreditCard,
-  Keyboard
+  Keyboard,
+  ArrowRight,
+  Check,
+  Edit3,
+  ShieldCheck,
+  Lock,
+  Layers
 } from 'lucide-react';
 import { save, open, confirm } from '@tauri-apps/plugin-dialog';
-import { copyFile } from '@tauri-apps/plugin-fs';
-import { appDataDir, join } from '@tauri-apps/api/path';
+import { invoke } from '@tauri-apps/api/core';
 import * as OTPAuth from 'otpauth';
 import Staff from './Staff';
-import { wipeAllData, getDb, formatCustomBillNumber, type BillYearFormat } from '../lib/db';
+import { wipeAllData, getDb, formatCustomBillNumber, closeDbConnection, type BillYearFormat } from '../lib/db';
+import { CompanyModal } from '../components/CompanyModal';
+import { 
+  getCompanies, 
+  getActiveCompany, 
+  updateCompany, 
+  createCompany, 
+  deleteCompany, 
+  switchCompany, 
+  prepareFullBackupMetadata,
+  restoreFullBackupMetadata,
+  type Company 
+} from '../lib/companies';
+import { useAuth } from '../lib/AuthContext';
 
-type SettingsTab = 'shop' | 'billing' | 'taxes' | 'inventory' | 'staff' | 'backup' | 'interface';
+type SettingsTab = 'shop' | 'companies' | 'billing' | 'taxes' | 'inventory' | 'staff' | 'backup' | 'interface';
 
 interface CategoryItem {
   id: SettingsTab;
@@ -38,6 +55,7 @@ interface CategoryItem {
 
 const CATEGORIES: CategoryItem[] = [
   { id: 'shop', label: 'Store & Branding', desc: 'Shop details, contact & GSTIN', icon: Store },
+  { id: 'companies', label: 'Company Management', desc: 'Create & manage independent company databases', icon: Building2 },
   { id: 'billing', label: 'Bill & Invoicing', desc: 'Invoice format, prefix & counters', icon: Receipt },
   { id: 'taxes', label: 'Taxes & GST', desc: 'Sales, purchase tax & profit rules', icon: Percent },
   { id: 'inventory', label: 'Inventory & Units', desc: 'Stock alerts & unit measurements', icon: Boxes },
@@ -56,6 +74,121 @@ export default function Settings() {
   const [wipeCode, setWipeCode] = useState('');
   const [wipeError, setWipeError] = useState('');
 
+  const [showCompanyModal, setShowCompanyModal] = useState(false);
+  const activeCompany = getActiveCompany();
+
+  const auth = useAuth();
+  const user = auth?.user;
+  const isMasterAdmin = Boolean(user && user.role === 'admin' && activeCompany.id === 'comp_default');
+
+  // Company Management Tab State
+  const [companiesList, setCompaniesList] = useState<Company[]>(getCompanies);
+  const [showCreateCompanyCard, setShowCreateCompanyCard] = useState(false);
+  const [newCompName, setNewCompName] = useState('');
+  const [newCompCode, setNewCompCode] = useState('');
+  const [newCompShopName, setNewCompShopName] = useState('');
+  const [newCompAddress, setNewCompAddress] = useState('');
+  const [newCompPhone, setNewCompPhone] = useState('');
+  const [newCompGSTIN, setNewCompGSTIN] = useState('');
+  const [newCompAdminPin, setNewCompAdminPin] = useState('1234');
+  const [isSubmittingComp, setIsSubmittingComp] = useState(false);
+
+  // Edit Company State
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+  const [editCompName, setEditCompName] = useState('');
+  const [editCompCode, setEditCompCode] = useState('');
+  const [editCompShopName, setEditCompShopName] = useState('');
+  const [editCompAddress, setEditCompAddress] = useState('');
+  const [editCompPhone, setEditCompPhone] = useState('');
+  const [editCompGSTIN, setEditCompGSTIN] = useState('');
+
+  const refreshCompanies = () => {
+    setCompaniesList(getCompanies());
+  };
+
+  const handleCreateCompanySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCompName.trim()) {
+      setStatus({ type: 'error', message: 'Please enter a Company / Business Name.' });
+      return;
+    }
+    setIsSubmittingComp(true);
+    try {
+      const created = createCompany({
+        name: newCompName.trim(),
+        code: newCompCode.trim().toUpperCase(),
+        shopName: newCompShopName.trim() || newCompName.trim(),
+        shopAddress: newCompAddress.trim(),
+        shopPhone: newCompPhone.trim(),
+        shopGSTIN: newCompGSTIN.trim().toUpperCase(),
+        adminPin: newCompAdminPin.trim() || '1234'
+      });
+      refreshCompanies();
+      setNewCompName('');
+      setNewCompCode('');
+      setNewCompShopName('');
+      setNewCompAddress('');
+      setNewCompPhone('');
+      setNewCompGSTIN('');
+      setNewCompAdminPin('1234');
+      setShowCreateCompanyCard(false);
+      setStatus({
+        type: 'success',
+        message: `Company "${created.name}" created successfully with an independent database!`
+      });
+    } catch (err) {
+      setStatus({ type: 'error', message: 'Failed to create company: ' + err });
+    } finally {
+      setIsSubmittingComp(false);
+    }
+  };
+
+  const handleStartEditCompany = (comp: Company) => {
+    setEditingCompany(comp);
+    setEditCompName(comp.name);
+    setEditCompCode(comp.code || '');
+    setEditCompShopName(comp.shopName || comp.name);
+    setEditCompAddress(comp.shopAddress || '');
+    setEditCompPhone(comp.shopPhone || '');
+    setEditCompGSTIN(comp.shopGSTIN || '');
+  };
+
+  const handleSaveEditCompany = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCompany || !editCompName.trim()) return;
+    try {
+      updateCompany(editingCompany.id, {
+        name: editCompName.trim(),
+        code: editCompCode.trim().toUpperCase(),
+        shopName: editCompShopName.trim() || editCompName.trim(),
+        shopAddress: editCompAddress.trim(),
+        shopPhone: editCompPhone.trim(),
+        shopGSTIN: editCompGSTIN.trim().toUpperCase()
+      });
+      refreshCompanies();
+      setEditingCompany(null);
+      setStatus({ type: 'success', message: 'Company details updated successfully!' });
+    } catch (err) {
+      setStatus({ type: 'error', message: 'Failed to update company: ' + err });
+    }
+  };
+
+  const handleDeleteCompanyClick = async (comp: Company) => {
+    if (comp.id === 'comp_default') {
+      alert('The primary / default company cannot be deleted.');
+      return;
+    }
+    const ok = await confirm(
+      `Are you sure you want to remove "${comp.name}"?\n\nIts independent data file will be detached.`,
+      { title: 'Delete Business Profile', kind: 'warning' }
+    );
+    if (!ok) return;
+
+    deleteCompany(comp.id);
+    refreshCompanies();
+    setStatus({ type: 'success', message: `Company "${comp.name}" removed.` });
+  };
+
   // Shop Profile State
   const [shopName, setShopName] = useState(() => localStorage.getItem('shopName') || 'Electro Hub');
   const [shopAddress, setShopAddress] = useState(() => localStorage.getItem('shopAddress') || '123 Market Street, City');
@@ -66,6 +199,9 @@ export default function Settings() {
     const finalVal = key === 'shopGSTIN' ? value.toUpperCase() : value;
     setter(finalVal);
     localStorage.setItem(key, finalVal);
+    try {
+      updateCompany(activeCompany.id, { [key]: finalVal });
+    } catch (e) {}
     window.dispatchEvent(new Event('preferencesUpdated'));
   };
 
@@ -317,17 +453,34 @@ export default function Settings() {
   }, []);
 
   // Backup & Restore
-  const handleBackup = async () => {
+  const handleFullBackup = async () => {
     try {
       setIsLoading(true);
       setStatus(null);
-      
+
+      // Checkpoint active database to ensure WAL is fully flushed to disk
+      try {
+        const db = await getDb();
+        await db.execute('PRAGMA wal_checkpoint(TRUNCATE);');
+      } catch (err) {
+        console.warn('Could not truncate WAL checkpoint:', err);
+      }
+
+      const { metadataJson, dbFiles } = prepareFullBackupMetadata();
+      const allComps = getCompanies();
+
       const savePath = await save({
-        filters: [{
-          name: 'SQLite Database',
-          extensions: ['db']
-        }],
-        defaultPath: `inventory_backup_${new Date().toISOString().split('T')[0]}.db`
+        filters: [
+          {
+            name: 'Electro Hub Multi-Company Backup Package (*.ehbak)',
+            extensions: ['ehbak']
+          },
+          {
+            name: 'All Files (*.*)',
+            extensions: ['*']
+          }
+        ],
+        defaultPath: `ElectroHub_Full_Backup_${new Date().toISOString().split('T')[0]}.ehbak`
       });
 
       if (!savePath) {
@@ -335,15 +488,20 @@ export default function Settings() {
         return;
       }
 
-      const appDataDirPath = await appDataDir();
-      const sourcePath = await join(appDataDirPath, 'inventory.db');
+      const res = await invoke<{ file_count: number; total_bytes: number }>('backup_all_companies', {
+        targetPath: savePath,
+        metadataJson,
+        dbFiles
+      });
 
-      await copyFile(sourcePath, savePath);
-
-      setStatus({ type: 'success', message: `Database successfully backed up to ${savePath}` });
+      const sizeMb = (res.total_bytes / (1024 * 1024)).toFixed(2);
+      setStatus({
+        type: 'success',
+        message: `Full system backup created successfully! Backed up all ${allComps.length} companies (${res.file_count} database files, ${sizeMb} MB) to ${savePath}`
+      });
     } catch (e: any) {
       console.error(e);
-      const errorMessage = typeof e === 'string' ? e : (e?.message || 'Failed to create backup');
+      const errorMessage = typeof e === 'string' ? e : (e?.message || 'Failed to create full backup');
       setStatus({ type: 'error', message: errorMessage });
     } finally {
       setIsLoading(false);
@@ -351,10 +509,13 @@ export default function Settings() {
   };
 
   const handleRestore = async () => {
-    const isConfirmed = await confirm('WARNING: Restoring a backup will overwrite all current database data. This action cannot be undone. Do you wish to continue?', {
-      title: 'Confirm Database Restore',
-      kind: 'warning'
-    });
+    const isConfirmed = await confirm(
+      'WARNING: Restoring a backup will overwrite current database and company records. Do you wish to proceed?',
+      {
+        title: 'Confirm System / Database Restore',
+        kind: 'warning'
+      }
+    );
 
     if (!isConfirmed) return;
 
@@ -363,10 +524,16 @@ export default function Settings() {
       setStatus(null);
 
       const openPath = await open({
-        filters: [{
-          name: 'SQLite Database',
-          extensions: ['db']
-        }],
+        filters: [
+          {
+            name: 'Electro Hub Backup Package (*.ehbak, *.db, *.bak)',
+            extensions: ['ehbak', 'db', 'bak']
+          },
+          {
+            name: 'All Files (*.*)',
+            extensions: ['*']
+          }
+        ],
         multiple: false
       });
 
@@ -375,15 +542,39 @@ export default function Settings() {
         return;
       }
 
-      const appDataDirPath = await appDataDir();
-      const destPath = await join(appDataDirPath, 'inventory.db');
+      // Close in-memory database pool before restoring files to release file locks
+      try {
+        await closeDbConnection();
+      } catch (err) {
+        console.warn('Error closing database pool prior to restore:', err);
+      }
 
-      await copyFile(openPath as string, destPath);
+      const activeDbName = activeCompany.dbFile ? activeCompany.dbFile.replace('sqlite:', '') : 'inventory.db';
 
-      setStatus({ type: 'success', message: 'Database successfully restored! Reloading application...' });
-      
+      const res = await invoke<{
+        is_full_backup: boolean;
+        metadata_json: string;
+        restored_files: string[];
+      }>('restore_backup', {
+        backupPath: openPath as string,
+        activeDbName
+      });
+
+      if (res.is_full_backup && res.metadata_json) {
+        const restored = restoreFullBackupMetadata(res.metadata_json);
+        setStatus({
+          type: 'success',
+          message: `Complete system restored! Successfully recovered ${restored.companyCount} companies and ${res.restored_files.length} databases. Active store: "${restored.activeName}". Reloading application...`
+        });
+      } else {
+        setStatus({
+          type: 'success',
+          message: `Database restored into "${activeCompany.name}"! Reloading application...`
+        });
+      }
+
       setTimeout(() => {
-        window.location.reload();
+        window.location.href = `/?restore=${Date.now()}`;
       }, 2500);
 
     } catch (e: any) {
@@ -523,6 +714,28 @@ export default function Settings() {
                   </p>
                 </div>
 
+                {/* Active Company / Business Profile Card */}
+                <div className="p-4 rounded-xl border border-primary/25 bg-primary/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                      <Building2 className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[10.5px] font-bold text-primary uppercase tracking-wider">Active Business Profile</div>
+                      <div className="text-sm font-bold text-ink truncate">{activeCompany.name}</div>
+                      <div className="text-xs text-muted">Independent database & isolated inventory</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('companies')}
+                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary shadow-2xs transition-all shrink-0 flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98]"
+                  >
+                    <Building2 className="w-3.5 h-3.5" />
+                    <span>Manage Companies</span>
+                  </button>
+                </div>
+
                 {/* Form Fields */}
                 <div className="bg-canvas rounded-xl shadow-sm border border-hairline overflow-hidden p-6 space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -600,7 +813,396 @@ export default function Settings() {
               </div>
             )}
 
-            {/* TAB 2: BILL & INVOICE FORMATTING */}
+            {/* TAB 2: COMPANY CREATION & MANAGEMENT */}
+            {activeTab === 'companies' && (
+              <div className="space-y-6 animate-in fade-in duration-150">
+                {/* Header */}
+                <div className="border-b border-hairline pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-ink flex items-center gap-2">
+                      <Building2 className="w-5 h-5 text-primary" />
+                      Company & Branch Management
+                    </h2>
+                    <p className="text-sm text-muted mt-1">
+                      Create and manage independent companies. Each company runs on an isolated SQLite database.
+                    </p>
+                  </div>
+                  {isMasterAdmin && !showCreateCompanyCard && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateCompanyCard(true)}
+                      className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary shadow-2xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer active:scale-[0.98]"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Create New Company</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Role / Authority Notice */}
+                {!isMasterAdmin ? (
+                  <div className="p-4 bg-surface-soft border border-hairline rounded-xl flex items-start gap-3 text-xs text-muted">
+                    <Lock className="w-4 h-4 text-muted shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-ink">Read-Only Mode for Secondary Businesses</div>
+                      <p className="mt-0.5">
+                        You are currently signed into a branch or secondary business. To create new companies, edit company settings, or delete companies, switch back to the Main Company Admin account.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/25 rounded-xl flex items-start gap-3 text-xs text-emerald-800 dark:text-emerald-300">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold">Main Default Administrator Authority</div>
+                      <p className="mt-0.5 text-muted">
+                        You have full authority to create, configure, switch, and remove business profiles.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Create Company Form */}
+                {showCreateCompanyCard && (
+                  <form onSubmit={handleCreateCompanySubmit} className="bg-canvas border-2 border-primary/40 rounded-xl p-6 shadow-sm space-y-5 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between border-b border-hairline pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                          <Plus className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-ink">Create New Company / Branch</h3>
+                          <p className="text-xs text-muted">Creates an isolated SQLite database file with fresh inventory and sales</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateCompanyCard(false)}
+                        className="text-muted hover:text-ink p-1 rounded-md hover:bg-surface-soft transition-colors cursor-pointer"
+                        title="Close Form"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          Company / Business Name *
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Electro Hub Wholesale / Branch 2"
+                          value={newCompName}
+                          onChange={e => setNewCompName(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
+                          required
+                          autoFocus
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          Short Code / Prefix (e.g. BR2 / EHW)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. BR2"
+                          value={newCompCode}
+                          onChange={e => setNewCompCode(e.target.value.toUpperCase())}
+                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary uppercase font-mono text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          Shop / Trade Display Name
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Electro Hub Electronics"
+                          value={newCompShopName}
+                          onChange={e => setNewCompShopName(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          Shop Address (Printed on Invoices)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 45 Station Road, Coimbatore - 641001"
+                          value={newCompAddress}
+                          onChange={e => setNewCompAddress(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          Phone / Mobile
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. +91 9443210000"
+                          value={newCompPhone}
+                          onChange={e => setNewCompPhone(e.target.value)}
+                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          GSTIN
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 33AAAAA0000A1Z5"
+                          value={newCompGSTIN}
+                          onChange={e => setNewCompGSTIN(e.target.value.toUpperCase())}
+                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary uppercase font-mono text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                          Initial Admin PIN (Default 1234)
+                        </label>
+                        <input
+                          type="password"
+                          inputMode="numeric"
+                          placeholder="1234"
+                          value={newCompAdminPin}
+                          onChange={e => setNewCompAdminPin(e.target.value)}
+                          className="w-36 px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary font-mono tracking-widest text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-hairline">
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateCompanyCard(false)}
+                        className="px-4 py-2 text-xs font-semibold rounded-lg bg-surface-soft hover:bg-surface-strong text-muted hover:text-ink transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingComp}
+                        className="px-5 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-[0.98]"
+                      >
+                        <Check className="w-4 h-4" />
+                        <span>{isSubmittingComp ? 'Creating Company...' : 'Create Company'}</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {/* Edit Company Modal / Dialog */}
+                {editingCompany && (
+                  <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+                    <form onSubmit={handleSaveEditCompany} className="bg-canvas border border-hairline rounded-xl p-6 shadow-2xl max-w-lg w-full space-y-4 animate-in fade-in zoom-in duration-150">
+                      <div className="flex items-center justify-between border-b border-hairline pb-3">
+                        <div className="flex items-center gap-2">
+                          <Edit3 className="w-4 h-4 text-primary" />
+                          <h3 className="text-sm font-bold text-ink">Edit Company Details</h3>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditingCompany(null)}
+                          className="text-muted hover:text-ink p-1 rounded-md hover:bg-surface-soft"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 text-xs">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-ink mb-1">Company / Business Name *</label>
+                          <input
+                            type="text"
+                            value={editCompName}
+                            onChange={e => setEditCompName(e.target.value)}
+                            className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
+                            required
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-ink mb-1">Short Code / Tag</label>
+                            <input
+                              type="text"
+                              value={editCompCode}
+                              onChange={e => setEditCompCode(e.target.value.toUpperCase())}
+                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink font-mono uppercase"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-ink mb-1">Shop / Trade Name</label>
+                            <input
+                              type="text"
+                              value={editCompShopName}
+                              onChange={e => setEditCompShopName(e.target.value)}
+                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-ink mb-1">Shop Address</label>
+                          <input
+                            type="text"
+                            value={editCompAddress}
+                            onChange={e => setEditCompAddress(e.target.value)}
+                            className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-ink mb-1">Phone</label>
+                            <input
+                              type="text"
+                              value={editCompPhone}
+                              onChange={e => setEditCompPhone(e.target.value)}
+                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-ink mb-1">GSTIN</label>
+                            <input
+                              type="text"
+                              value={editCompGSTIN}
+                              onChange={e => setEditCompGSTIN(e.target.value.toUpperCase())}
+                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink font-mono uppercase"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">
+                        <button
+                          type="button"
+                          onClick={() => setEditingCompany(null)}
+                          className="px-4 py-2 text-xs font-semibold rounded-lg bg-surface-soft hover:bg-surface-strong text-muted hover:text-ink transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary transition-all flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Save Changes</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+                {/* Available Companies List */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted">
+                      Registered Companies ({companiesList.length})
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {companiesList.map(comp => {
+                      const isActive = comp.id === activeCompany.id;
+                      return (
+                        <div
+                          key={comp.id}
+                          className={`p-5 rounded-xl border transition-all ${
+                            isActive
+                              ? 'border-primary bg-primary/5 shadow-xs'
+                              : 'border-hairline bg-canvas hover:bg-surface-soft/60'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex items-start gap-3.5 min-w-0">
+                              <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 font-bold text-sm ${
+                                isActive ? 'bg-primary text-on-primary shadow-xs' : 'bg-surface-strong text-muted'
+                              }`}>
+                                {comp.code ? comp.code.substring(0, 3) : <Building2 className="w-5 h-5" />}
+                              </div>
+                              <div className="min-w-0 space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="text-sm font-bold text-ink truncate">{comp.name}</h3>
+                                  {isActive && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                                      <Check className="w-3 h-3" /> Active Business
+                                    </span>
+                                  )}
+                                  {comp.id === 'comp_default' && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-surface-strong text-muted border border-hairline">
+                                      Main Account
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted space-y-0.5">
+                                  {comp.shopAddress && <div className="truncate">{comp.shopAddress}</div>}
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    {comp.shopPhone && <span>Ph: <strong className="text-ink font-medium">{comp.shopPhone}</strong></span>}
+                                    {comp.shopGSTIN && <span>GSTIN: <strong className="font-mono text-ink font-medium">{comp.shopGSTIN}</strong></span>}
+                                  </div>
+                                </div>
+                                <div className="text-[10.5px] font-mono text-muted/70">
+                                  Database: <span className="font-semibold text-ink/75">{comp.dbFile}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                              {isMasterAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditCompany(comp)}
+                                  className="p-2 text-muted hover:text-ink hover:bg-surface-strong rounded-lg transition-colors cursor-pointer"
+                                  title="Edit Company Details"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {isMasterAdmin && comp.id !== 'comp_default' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCompanyClick(comp)}
+                                  className="p-2 text-muted hover:text-signature-coral hover:bg-signature-coral/10 rounded-lg transition-colors cursor-pointer"
+                                  title="Delete Company"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {!isActive && (
+                                <button
+                                  type="button"
+                                  onClick={() => switchCompany(comp.id)}
+                                  className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-[0.98]"
+                                >
+                                  <span>Switch Business</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: BILL & INVOICE FORMATTING */}
             {activeTab === 'billing' && (
               <div className="space-y-6 animate-in fade-in duration-150">
                 <div className="border-b border-hairline pb-4">
@@ -1124,34 +1726,60 @@ export default function Settings() {
                   </div>
                 )}
 
-                {/* Backup & Restore Action Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Backup & Restore Action Grid (Entire Full Backup Only) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Card 1: Entire Full System Backup */}
                   <button
-                    onClick={handleBackup}
+                    type="button"
+                    onClick={handleFullBackup}
                     disabled={isLoading}
-                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-primary rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 text-left"
+                    className="group relative overflow-hidden bg-canvas border-2 border-primary/40 hover:border-primary rounded-xl p-8 flex flex-col items-center justify-between transition-all hover:bg-surface-soft hover:shadow-lg disabled:opacity-50 text-left cursor-pointer min-h-[290px]"
                   >
-                    <div className="w-14 h-14 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                      <Download className="w-7 h-7" />
+                    <div className="w-full flex justify-between items-center">
+                      <span className="text-xs font-semibold text-muted">Complete System Package</span>
+                      <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-primary/10 text-primary border border-primary/20">
+                        All Companies ({companiesList.length})
+                      </span>
                     </div>
-                    <h3 className="text-lg font-bold text-ink">Create Database Backup</h3>
-                    <p className="text-xs text-muted text-center mt-2 max-w-xs">
-                      Export a full snapshot of all products, sales, customers, and ledger records to an external USB or cloud drive.
-                    </p>
+                    <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center my-4 group-hover:scale-110 transition-transform">
+                      <Layers className="w-8 h-8" />
+                    </div>
+                    <div className="text-center">
+                      <h3 className="text-lg font-bold text-ink">Create Full System Backup</h3>
+                      <p className="text-xs text-muted mt-2 max-w-sm leading-relaxed">
+                        Backs up <strong>all {companiesList.length} companies</strong>, their independent databases, product stocks, customer ledgers, and billing preferences into a single secure backup file.
+                      </p>
+                    </div>
+                    <div className="mt-5 w-full py-2.5 bg-primary text-white rounded-lg text-xs font-semibold text-center group-hover:bg-primary-active transition-colors shadow-2xs">
+                      Backup All Data Now
+                    </div>
                   </button>
 
+                  {/* Card 2: Restore Full System Backup */}
                   <button
+                    type="button"
                     onClick={handleRestore}
                     disabled={isLoading}
-                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-amber-500 rounded-xl p-8 flex flex-col items-center justify-center transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 text-left"
+                    className="group relative overflow-hidden bg-canvas border border-hairline hover:border-amber-500 rounded-xl p-8 flex flex-col items-center justify-between transition-all hover:bg-surface-soft hover:shadow-md disabled:opacity-50 text-left cursor-pointer min-h-[290px]"
                   >
-                    <div className="w-14 h-14 bg-amber-500/10 text-amber-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                      <Upload className="w-7 h-7" />
+                    <div className="w-full flex justify-between items-center">
+                      <span className="text-xs font-semibold text-muted">System Recovery</span>
+                      <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-amber-500/10 text-amber-700 border border-amber-500/20">
+                        Full Restore
+                      </span>
                     </div>
-                    <h3 className="text-lg font-bold text-ink">Restore Database</h3>
-                    <p className="text-xs text-muted text-center mt-2 max-w-xs">
-                      Replace the current database file with a previously saved `.db` backup file. Will require an app reload.
-                    </p>
+                    <div className="w-16 h-16 bg-amber-500/10 text-amber-600 rounded-2xl flex items-center justify-center my-4 group-hover:scale-110 transition-transform">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <div className="text-center">
+                      <h3 className="text-lg font-bold text-ink">Restore System Backup</h3>
+                      <p className="text-xs text-muted mt-2 max-w-sm leading-relaxed">
+                        Restore your entire system from a previously saved backup file. Completely recovers all companies, databases, and billing settings. Will reload the application.
+                      </p>
+                    </div>
+                    <div className="mt-5 w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold text-center transition-colors shadow-2xs">
+                      Restore Backup File
+                    </div>
                   </button>
                 </div>
 
@@ -1390,6 +2018,8 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <CompanyModal isOpen={showCompanyModal} onClose={() => setShowCompanyModal(false)} />
 
     </div>
   );

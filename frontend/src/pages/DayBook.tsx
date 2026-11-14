@@ -333,7 +333,12 @@ export default function DayBook() {
 
       const subtotal = sale.net_amount - sale.tax_amount + sale.discount;
       const originalPriceBasis = items.reduce((sum, i) => sum + (i.selling_price * i.cart_qty), 0);
-      const isInclusive = Math.abs(sale.net_amount - (originalPriceBasis - sale.discount)) < 0.1;
+      const netAmount = sale.net_amount || 0;
+      const taxAmount = sale.tax_amount || 0;
+      const discountAmount = sale.discount || 0;
+      const diffInclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount));
+      const diffExclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount + taxAmount));
+      const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
       const taxMethod = isInclusive ? 'inclusive' : 'exclusive';
 
       setPrintData({

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { User, KeyRound, X } from 'lucide-react';
+import { User, KeyRound, X, Building2, ChevronDown } from 'lucide-react';
+import { CompanyModal } from '../components/CompanyModal';
+import { getActiveCompany } from '../lib/companies';
 import { getDb } from '../lib/db';
 import * as OTPAuth from 'otpauth';
 
@@ -13,6 +15,8 @@ export default function Login() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showCompanyModal, setShowCompanyModal] = useState(false);
+  const activeCompany = getActiveCompany();
   
   // Forgot PIN state
   const [showForgotPin, setShowForgotPin] = useState(false);
@@ -69,6 +73,27 @@ export default function Login() {
           <p className="text-body mt-2 text-base">Sign in to your account</p>
         </div>
         
+        {/* Active Company Selector Pill on Login */}
+        <div className="px-8 pt-6 pb-0">
+          <button
+            type="button"
+            onClick={() => setShowCompanyModal(true)}
+            className="w-full py-2.5 px-3 bg-surface-soft hover:bg-surface-strong border border-hairline rounded-lg flex items-center justify-between text-xs text-ink transition-colors shadow-2xs group cursor-pointer"
+            title="Switch Business / Company"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Building2 className="w-4 h-4 text-primary shrink-0" />
+              <div className="text-left truncate">
+                <span className="text-[10px] text-muted block uppercase tracking-wider font-semibold">Active Business</span>
+                <span className="font-bold text-xs truncate block text-ink">{activeCompany.name}</span>
+              </div>
+            </div>
+            <span className="text-[11px] text-primary font-semibold flex items-center gap-1 shrink-0 group-hover:underline">
+              Switch <ChevronDown className="w-3 h-3" />
+            </span>
+          </button>
+        </div>
+
         <form onSubmit={handleLogin} className="p-8">
           {error && (
             <div className="mb-6 p-3 bg-canvas border border-signature-coral text-signature-coral rounded-sm text-sm text-center font-medium animate-in fade-in">
@@ -232,6 +257,8 @@ export default function Login() {
           </div>
         </div>
       )}
+
+      <CompanyModal isOpen={showCompanyModal} onClose={() => setShowCompanyModal(false)} isReadOnly={true} />
     </div>
   );
 }

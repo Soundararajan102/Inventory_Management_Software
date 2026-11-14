@@ -38,7 +38,8 @@ export default function POS() {
   const [isProcessing, setIsProcessing] = useState(false);
   
   const [customerId, setCustomerId] = useState<number | ''>('');
-  const [paidAmount, setPaidAmount] = useState<number | ''>('');
+  const [paidAmount, setPaidAmount] = useState<number | ''>(0);
+  const paidInputRef = useRef<HTMLInputElement>(null);
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'UPI' | 'Card' | 'Cheque'>('Cash');
   const [posChequeNo, setPosChequeNo] = useState('');
   const [posBankName, setPosBankName] = useState('');
@@ -173,6 +174,22 @@ export default function POS() {
     return (localStorage.getItem('taxMethod') as 'exclusive' | 'inclusive') || 'exclusive';
   });
 
+  // Track original tax method, GST status and sale record when viewing or editing a past bill/quotation
+  const [loadedSaleTaxMethod, setLoadedSaleTaxMethod] = useState<'exclusive' | 'inclusive' | null>(null);
+  const [loadedSaleEnableGST, setLoadedSaleEnableGST] = useState<boolean | null>(null);
+  const [loadedSaleRecord, setLoadedSaleRecord] = useState<any | null>(null);
+
+  // If viewing or editing a past transaction, lock to its original tax method; otherwise use the global setting
+  const effectiveSalesTaxMethod: 'exclusive' | 'inclusive' = 
+    (activeSaleId || editingQuotationId || convertingQuotationId) && loadedSaleTaxMethod !== null
+      ? loadedSaleTaxMethod
+      : salesTaxMethod;
+
+  const effectiveEnableSalesGST: boolean = 
+    (activeSaleId || editingQuotationId || convertingQuotationId) && loadedSaleEnableGST !== null
+      ? loadedSaleEnableGST
+      : enableSalesGST;
+
   useEffect(() => {
     const handlePrefChange = () => {
       const gVal = localStorage.getItem('enableSalesGST');
@@ -193,6 +210,10 @@ export default function POS() {
     refreshNextNumbers();
     if (activeSaleId) {
       loadEditData(activeSaleId);
+    } else {
+      setLoadedSaleRecord(null);
+      setLoadedSaleTaxMethod(null);
+      setLoadedSaleEnableGST(null);
     }
   }, [activeSaleId]);
 
@@ -220,9 +241,25 @@ export default function POS() {
     try {
       const s = await getSaleById(id);
       if (s) {
+        setLoadedSaleRecord(s);
         setEditingInvoiceNumber(s.invoice_number || `Bill #${s.id}`);
         if (s.date) setBillDate(s.date.split(' ')[0]);
         if (s.customer_id) setCustomerId(s.customer_id);
+
+        // Detect original tax method & GST status from the saved bill data
+        const originalPriceBasis = (s.items || []).reduce(
+          (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
+          0
+        );
+        const netAmount = Number(s.net_amount || 0);
+        const taxAmount = Number(s.tax_amount || 0);
+        const discountAmount = Number(s.discount || 0);
+        const diffInclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount));
+        const diffExclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount + taxAmount));
+        const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
+        setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
+        setLoadedSaleEnableGST(taxAmount > 0);
+
         setCart(s.items.map((i: any) => ({
           id: i.product_id,
           name: i.name,
@@ -282,6 +319,9 @@ export default function POS() {
     setDiscount(0);
     setPaidAmount(0);
     setEditingInvoiceNumber(null);
+    setLoadedSaleRecord(null);
+    setLoadedSaleTaxMethod(null);
+    setLoadedSaleEnableGST(null);
     setBillDate(getLocalDate());
     setDispatchDetails({
       ewayBillNo: '',
@@ -314,6 +354,8 @@ export default function POS() {
     setCart([]);
     setDiscount(0);
     setQuotationNotes('');
+    setLoadedSaleTaxMethod(null);
+    setLoadedSaleEnableGST(null);
     setBillDate(getLocalDate());
     setPosMode('billing');
   }
@@ -390,6 +432,9 @@ export default function POS() {
     const whIdToUse = sourceType === 'warehouse' && sourceWarehouseId !== '' ? Number(sourceWarehouseId) : null;
     getSellableProducts(whIdToUse).then(newProducts => {
       setProducts(newProducts);
+      // If currently viewing a bill, cart is strictly read-only and must never be altered or clamped
+      if (isViewOnly) return;
+
       setCart(prevCart => prevCart.map(cartItem => {
         const matching = newProducts.find(p => p.id === cartItem.id);
         const itemSrc = cartItem.item_source_type || 'shop';
@@ -400,16 +445,20 @@ export default function POS() {
         } else {
           availStock = matching?.shop_stock ?? matching?.stock_quantity ?? 0;
         }
+
+        // When editing an existing bill or in quotation mode, do NOT clamp historical cart quantities
+        const shouldClampQty = !activeSaleId && posMode === 'billing';
+
         return {
           ...cartItem,
-          stock_quantity: availStock,
+          stock_quantity: activeSaleId ? cartItem.stock_quantity : availStock,
           shop_stock: matching?.shop_stock ?? cartItem.shop_stock,
           warehouse_stocks: matching?.warehouse_stocks ?? cartItem.warehouse_stocks,
-          cart_qty: posMode === 'billing' ? Math.min(availStock > 0 ? availStock : 1, cartItem.cart_qty) : cartItem.cart_qty
+          cart_qty: shouldClampQty ? Math.min(availStock > 0 ? availStock : 1, cartItem.cart_qty) : cartItem.cart_qty
         };
       }));
     }).catch(console.error);
-  }, [sourceType, sourceWarehouseId]);
+  }, [sourceType, sourceWarehouseId, isViewOnly, activeSaleId, posMode]);
 
   const displayProducts = search.trim() === '' 
     ? [] 
@@ -652,6 +701,7 @@ export default function POS() {
 
   // Handle Checkout for active Sale Bill
   async function handleCheckout() {
+    if (isViewOnly) return;
     if (cart.length === 0) {
       alert("Cart is empty! Please add products before saving.");
       return;
@@ -672,11 +722,36 @@ export default function POS() {
     const finalPaidAmount = effectivePaidAmount;
     if (finalPaidAmount < 0) {
       alert("Paid amount cannot be negative.");
+      paidInputRef.current?.focus();
+      return;
+    }
+    if (grandTotal > 0 && (paidAmount === '' || paidAmount === null)) {
+      alert("Please enter the Amount Paid by the customer to proceed.");
+      paidInputRef.current?.focus();
+      paidInputRef.current?.select();
+      return;
+    }
+    if (grandTotal > 0 && finalPaidAmount <= 0 && customerId === '') {
+      alert("Please enter the Amount Paid. Walk-in customers cannot have ₹0 payment.");
+      paidInputRef.current?.focus();
+      paidInputRef.current?.select();
       return;
     }
     if (!editSaleId && isCreditPending && customerId === '') {
-      alert("Please select a customer to record credit / pending balance.");
+      alert(`Walk-in customers cannot take items on credit. Please enter the full amount (₹${grandTotal.toFixed(2)}) or select a registered customer to record balance due.`);
+      paidInputRef.current?.focus();
+      paidInputRef.current?.select();
       return;
+    }
+    if (!editSaleId && finalPaidAmount === 0 && customerId !== '') {
+      const custObj = customers.find(c => c.id === Number(customerId));
+      const custName = custObj ? custObj.name : 'this customer';
+      const confirmCredit = confirm(`Amount Paid is ₹0.00.\n\nThe entire bill amount of ₹${grandTotal.toFixed(2)} will be recorded as Credit / Balance Due for ${custName}.\n\nDo you wish to proceed?`);
+      if (!confirmCredit) {
+        paidInputRef.current?.focus();
+        paidInputRef.current?.select();
+        return;
+      }
     }
     if (finalPaidAmount > 0 && paymentMethod === 'Cheque' && isPdcDate(posChequeDate) && customerId === '') {
       alert("Post-Dated Cheques (PDC) require a registered customer so the pending due can be tracked. Please select or add a Customer.");
@@ -722,7 +797,8 @@ export default function POS() {
           sourceType,
           sourceType === 'warehouse' ? Number(sourceWarehouseId) : null,
           billDate,
-          hasDispatchDetails ? dispatchDetails : null
+          hasDispatchDetails ? dispatchDetails : null,
+          effectiveSalesTaxMethod
         );
         alert('Sale bill updated successfully!');
       } else {
@@ -741,7 +817,8 @@ export default function POS() {
           sourceType,
           sourceType === 'warehouse' ? Number(sourceWarehouseId) : null,
           billDate,
-          hasDispatchDetails ? dispatchDetails : null
+          hasDispatchDetails ? dispatchDetails : null,
+          effectiveSalesTaxMethod
         );
         invoiceNumber = typeof saleRes === 'string' ? saleRes : saleRes.invoiceNumber;
         const actualSaleId = (typeof saleRes === 'string' ? (Number(invoiceNumber.split('-')[1]) || 0) : saleRes.saleId) || 0;
@@ -775,7 +852,7 @@ export default function POS() {
         subtotal,
         taxAmount: tax,
         taxBreakdown,
-        taxMethod: enableSalesGST ? salesTaxMethod : undefined,
+        taxMethod: effectiveEnableSalesGST ? effectiveSalesTaxMethod : undefined,
         discount: discountAmount,
         netAmount: grandTotal,
         paidAmount: finalPaidAmount,
@@ -799,7 +876,7 @@ export default function POS() {
       setDiscount(0);
       setDiscountType('percentage');
       setCustomerId('');
-      setPaidAmount('');
+      setPaidAmount(0);
       setBillDate(getLocalDate());
       setSourceType('shop');
       setDispatchDetails({
@@ -848,7 +925,8 @@ export default function POS() {
           grandTotal,
           finalCustomerId,
           quotationNotes,
-          billDate
+          billDate,
+          effectiveSalesTaxMethod
         );
         alert('Quotation updated successfully!');
       } else {
@@ -860,7 +938,8 @@ export default function POS() {
           grandTotal,
           finalCustomerId,
           quotationNotes,
-          billDate
+          billDate,
+          effectiveSalesTaxMethod
         );
       }
       
@@ -884,7 +963,7 @@ export default function POS() {
         subtotal,
         taxAmount: tax,
         taxBreakdown,
-        taxMethod: enableSalesGST ? salesTaxMethod : undefined,
+        taxMethod: effectiveEnableSalesGST ? effectiveSalesTaxMethod : undefined,
         discount: discountAmount,
         netAmount: grandTotal,
         paidAmount: 0
@@ -943,6 +1022,19 @@ export default function POS() {
           gst_percentage: i.gst_percentage,
           stock_quantity: i.stock_quantity
         } as CartItem)));
+
+        const originalPriceBasis = fullQ.items.reduce(
+          (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
+          0
+        );
+        const qNet = Number(fullQ.net_amount || 0);
+        const qTax = Number(fullQ.tax_amount || 0);
+        const qDisc = Number(fullQ.discount || 0);
+        const diffInc = Math.abs(qNet - (originalPriceBasis - qDisc));
+        const diffExc = Math.abs(qNet - (originalPriceBasis - qDisc + qTax));
+        const isInclusive = qTax > 0 ? (diffInc < diffExc) : (diffInc <= 1.0);
+        setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
+        setLoadedSaleEnableGST(qTax > 0);
       }
 
       setDiscountType('amount');
@@ -986,6 +1078,19 @@ export default function POS() {
           gst_percentage: i.gst_percentage,
           stock_quantity: i.stock_quantity
         } as CartItem)));
+
+        const originalPriceBasis = fullQ.items.reduce(
+          (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
+          0
+        );
+        const qNet = Number(fullQ.net_amount || 0);
+        const qTax = Number(fullQ.tax_amount || 0);
+        const qDisc = Number(fullQ.discount || 0);
+        const diffInc = Math.abs(qNet - (originalPriceBasis - qDisc));
+        const diffExc = Math.abs(qNet - (originalPriceBasis - qDisc + qTax));
+        const isInclusive = qTax > 0 ? (diffInc < diffExc) : (diffInc <= 1.0);
+        setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
+        setLoadedSaleEnableGST(qTax > 0);
       }
 
       setDiscountType('amount');
@@ -1031,6 +1136,18 @@ export default function POS() {
         stock_quantity: i.stock_quantity
       } as CartItem));
 
+      const qOriginalBasis = (fullQ.items || []).reduce(
+        (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
+        0
+      );
+      const qNet = Number(fullQ.net_amount || 0);
+      const qTax = Number(fullQ.tax_amount || 0);
+      const qDisc = Number(fullQ.discount || 0);
+      const diffInc = Math.abs(qNet - (qOriginalBasis - qDisc));
+      const diffExc = Math.abs(qNet - (qOriginalBasis - qDisc + qTax));
+      const isQInclusive = qTax > 0 ? (diffInc < diffExc) : (diffInc <= 1.0);
+      const qTaxMethod = qTax > 0 ? (isQInclusive ? 'inclusive' : 'exclusive') : undefined;
+
       setPrintData({
         invoiceNumber: fullQ.quotation_number,
         isQuotation: true,
@@ -1041,7 +1158,7 @@ export default function POS() {
         items: mappedCart,
         subtotal: fullQ.total_amount,
         taxAmount: fullQ.tax_amount,
-        taxMethod: enableSalesGST ? salesTaxMethod : undefined,
+        taxMethod: qTaxMethod,
         discount: fullQ.discount,
         netAmount: fullQ.net_amount,
         paidAmount: 0
@@ -1093,14 +1210,14 @@ export default function POS() {
     const discountedItemPrice = originalItemPrice * (1 - discountRatio);
     
     let taxableValue = discountedItemPrice;
-    if (enableSalesGST && salesTaxMethod === 'inclusive') {
+    if (effectiveEnableSalesGST && effectiveSalesTaxMethod === 'inclusive') {
       const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
       taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
     }
 
     taxableValueSum += taxableValue;
 
-    if (enableSalesGST) {
+    if (effectiveEnableSalesGST) {
       const cgst = item.cgst_percentage || 0;
       const sgst = item.sgst_percentage || 0;
       
@@ -1115,13 +1232,15 @@ export default function POS() {
     }
   });
 
-  const exactGrandTotal = Math.max(0, taxableValueSum + taxSum);
-  const grandTotal = Math.round(exactGrandTotal);
-  const roundOff = grandTotal - exactGrandTotal;
-  const subtotal = originalPriceBasis;
-  const tax = taxSum;
-  const discountAmount = displayDiscountAmount;
-  const effectivePaidAmount = paidAmount === '' ? grandTotal : Number(paidAmount);
+  const exactGrandTotal = isViewOnly && loadedSaleRecord ? loadedSaleRecord.net_amount : Math.max(0, taxableValueSum + taxSum);
+  const grandTotal = isViewOnly && loadedSaleRecord ? loadedSaleRecord.net_amount : Math.round(exactGrandTotal);
+  const roundOff = isViewOnly && loadedSaleRecord
+    ? Number((loadedSaleRecord.net_amount - (loadedSaleRecord.total_amount + (effectiveSalesTaxMethod === 'inclusive' ? 0 : loadedSaleRecord.tax_amount) - (loadedSaleRecord.discount || 0))).toFixed(2))
+    : grandTotal - exactGrandTotal;
+  const subtotal = isViewOnly && loadedSaleRecord ? (loadedSaleRecord.total_amount || originalPriceBasis) : originalPriceBasis;
+  const tax = isViewOnly && loadedSaleRecord ? (loadedSaleRecord.tax_amount ?? taxSum) : taxSum;
+  const discountAmount = isViewOnly && loadedSaleRecord ? (loadedSaleRecord.discount || 0) : displayDiscountAmount;
+  const effectivePaidAmount = paidAmount === '' ? (isViewOnly && loadedSaleRecord ? (loadedSaleRecord.paid_amount || 0) : 0) : Number(paidAmount);
   const pendingBalance = Math.max(0, grandTotal - effectivePaidAmount);
   const isCreditPending = effectivePaidAmount < grandTotal && grandTotal > 0;
 
@@ -1494,7 +1613,7 @@ export default function POS() {
                             />
                             <span className="ml-1 text-muted">/ {item.unit || 'pc'}</span>
                           </div>
-                          {enableSalesGST && <span className="text-primary text-[10px]">({item.cgst_percentage || 0}% CGST, {item.sgst_percentage || 0}% SGST)</span>}
+                          {effectiveEnableSalesGST && <span className="text-primary text-[10px]">({item.cgst_percentage || 0}% CGST, {item.sgst_percentage || 0}% SGST)</span>}
 
                           {/* Item Stock Source Selector (Shop or Warehouse) */}
                           {isViewOnly ? (
@@ -1616,7 +1735,7 @@ export default function POS() {
               </div>
 
               <div className="space-y-3">
-                {enableSalesGST && salesTaxMethod === 'inclusive' ? (
+                {effectiveEnableSalesGST && effectiveSalesTaxMethod === 'inclusive' ? (
                   <div className="flex justify-between text-sm text-body">
                     <span>Original Price (GST Inc)</span>
                     <span className="font-medium text-ink tabular-nums">₹{subtotal.toFixed(2)}</span>
@@ -1668,10 +1787,10 @@ export default function POS() {
                 
                 <div className="flex justify-between text-sm text-body mt-2 pt-2 border-t border-hairline">
                   <span className="font-medium">Taxable Value</span>
-                  <span className="font-medium text-ink tabular-nums">₹{taxableValueSum.toFixed(2)}</span>
+                  <span className="font-medium text-ink tabular-nums">₹{(isViewOnly && loadedSaleRecord ? (effectiveSalesTaxMethod === 'inclusive' ? loadedSaleRecord.net_amount - loadedSaleRecord.tax_amount : loadedSaleRecord.total_amount) : taxableValueSum).toFixed(2)}</span>
                 </div>
 
-                {enableSalesGST && (
+                {effectiveEnableSalesGST && (
                   <div className="mt-2 space-y-1.5">
                     {Object.entries(taxBreakdown.cgst).map(([pct, amt]) => (
                       <div key={`cgst-${pct}`} className="flex justify-between items-center text-xs text-body">
@@ -1703,23 +1822,53 @@ export default function POS() {
                 {posMode === 'billing' ? (
                   <>
                     <div className="flex justify-between items-center text-sm text-body pt-3 pb-1 border-t border-hairline mt-3">
-                      <span className="font-medium">Amount Paid</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-ink">Amount Paid</span>
+                        {grandTotal > 0 && !isViewOnly && (
+                          <button
+                            type="button"
+                            onClick={() => setPaidAmount(Number(grandTotal.toFixed(2)))}
+                            className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors cursor-pointer"
+                            title="Quick fill full bill amount"
+                          >
+                            Full: ₹{grandTotal.toFixed(2)}
+                          </button>
+                        )}
+                      </div>
                       <div className="flex items-center">
                         <span className="text-muted font-medium mr-1">₹</span>
                         <input 
+                          ref={paidInputRef}
                           type="number" 
                           min="0"
                           disabled={isViewOnly}
                           max={grandTotal}
                           value={paidAmount === '' ? '' : paidAmount}
+                          onFocus={(e) => {
+                            if (paidAmount === 0) {
+                              e.target.select();
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleCheckout();
+                            }
+                          }}
                           onChange={(e) => {
                             if (isViewOnly) return;
-                            let val: number | string = e.target.value === '' ? '' : Number(e.target.value);
-                            if (typeof val === 'number' && val > grandTotal) val = Number(grandTotal.toFixed(2));
-                            setPaidAmount(val as number | '');
+                            const raw = e.target.value;
+                            if (raw === '') {
+                              setPaidAmount('');
+                              return;
+                            }
+                            let val = Number(raw);
+                            if (isNaN(val)) return;
+                            if (val > grandTotal) val = Number(grandTotal.toFixed(2));
+                            setPaidAmount(val);
                           }}
-                          placeholder={grandTotal > 0 ? grandTotal.toFixed(2) : '0'}
-                          className={`w-20 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-primary font-bold text-ink transition-colors tabular-nums ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
+                          placeholder="0"
+                          className={`w-24 text-right border-b-2 border-hairline focus:border-primary bg-transparent py-0.5 focus:outline-none font-bold text-ink transition-colors tabular-nums ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
                         />
                       </div>
                     </div>
@@ -1950,13 +2099,13 @@ export default function POS() {
                                 barcode: '',
                                 cart_key: `${i.product_id}_shop_0`
                               })),
-                              subtotal,
-                              taxAmount: tax,
-                              taxBreakdown,
-                              taxMethod: enableSalesGST ? salesTaxMethod : undefined,
-                              discount: discountAmount,
-                              netAmount: grandTotal,
-                              paidAmount: effectivePaidAmount,
+                              subtotal: s.total_amount ?? subtotal,
+                              taxAmount: s.tax_amount ?? tax,
+                              taxBreakdown: s.tax_amount > 0 ? taxBreakdown : { cgst: {}, sgst: {} },
+                              taxMethod: s.tax_amount > 0 ? effectiveSalesTaxMethod : undefined,
+                              discount: s.discount ?? discountAmount,
+                              netAmount: s.net_amount ?? grandTotal,
+                              paidAmount: s.paid_amount ?? effectivePaidAmount,
                               paymentMethod: s.payment_method || 'Cash',
                               sourceLocationName: s.source_type === 'warehouse' ? (whObj ? whObj.name : 'Warehouse') : 'Main Shop',
                               dispatchDetails: s.dispatchDetails || (s.dispatch_details ? (typeof s.dispatch_details === 'string' ? JSON.parse(s.dispatch_details) : s.dispatch_details) : undefined)

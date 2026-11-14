@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, ShoppingCart, Settings, Users, Truck, IndianRupee, Receipt, RotateCcw, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { 
+  LayoutDashboard, Package, ShoppingCart, Settings, Users, Truck, IndianRupee, 
+  Receipt, RotateCcw, FileText, ChevronLeft, ChevronRight, Building2, ChevronDown 
+} from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
 import POS from './pages/POS';
@@ -16,12 +19,16 @@ import Activation from './pages/Activation';
 import DayBook from './pages/DayBook';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { isAppActivated } from './lib/db';
+import { CompanyModal } from './components/CompanyModal';
+import { getActiveCompany } from './lib/companies';
 
 // Main Sidebar Component
 function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const [showCompanyModal, setShowCompanyModal] = useState(false);
+  const activeCompany = getActiveCompany();
   const [isExpanded, setIsExpanded] = useState(() => {
     return localStorage.getItem('sidebarExpanded') !== 'false';
   });
@@ -176,6 +183,26 @@ function Sidebar() {
         </div>
       </div>
 
+      {/* Tally-Style Company / Business Switcher */}
+      <div className={`shrink-0 ${isExpanded ? 'px-4 pb-2' : 'px-2 pb-2'}`}>
+        <button
+          type="button"
+          onClick={() => setShowCompanyModal(true)}
+          className={`w-full flex items-center justify-between border border-hairline rounded-lg text-ink bg-canvas hover:bg-surface-soft transition-colors shadow-2xs group cursor-pointer ${
+            isExpanded ? 'px-3 py-2 text-xs' : 'p-2 justify-center'
+          }`}
+          title={`Active Business: ${activeCompany.name} (Click to switch)`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <Building2 className="w-3.5 h-3.5 text-primary shrink-0" />
+            {isExpanded && <span className="font-semibold truncate text-[11.5px]">{activeCompany.name}</span>}
+          </div>
+          {isExpanded && (
+            <ChevronDown className="w-3 h-3 text-muted shrink-0 group-hover:text-ink transition-colors" />
+          )}
+        </button>
+      </div>
+
       <nav className="flex-1 mt-2 space-y-1 overflow-y-auto pb-4">
         {visibleMenuItems.map((item) => {
           const Icon = item.icon;
@@ -226,6 +253,8 @@ function Sidebar() {
           </button>
         </div>
       )}
+
+      <CompanyModal isOpen={showCompanyModal} onClose={() => setShowCompanyModal(false)} />
     </div>
   );
 }

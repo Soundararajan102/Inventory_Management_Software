@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Electro Hub - POS System Functional Manual</title>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 14mm 12mm 14mm 12mm;
+    @bottom-right {
+      content: "Page " counter(page);
+      font-size: 8pt;
+      color: #64748b;
+    }
+  }
+
+  *, *:before, *:after {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1e293b;
+    background-color: #ffffff;
+    line-height: 1.55;
+    font-size: 9.5pt;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Cover Page */
+  .cover-page {
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 250mm;
+    padding: 20mm 15mm;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%);
+    position: relative;
+    box-sizing: border-box;
+  }
+
+  .cover-header {
+    border-bottom: 3px solid #2563eb;
+    padding-bottom: 20px;
+  }
+
+  .app-badge {
+    display: inline-block;
+    background: #1e3a8a;
+    color: #ffffff;
+    font-size: 11pt;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    margin-bottom: 15px;
+  }
+
+  .cover-title {
+    font-size: 26pt;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.2;
+    margin: 10px 0 8px 0;
+  }
+
+  .cover-subtitle {
+    font-size: 13pt;
+    font-weight: 500;
+    color: #475569;
+    margin: 0 0 15px 0;
+  }
+
+  .cover-desc {
+    font-size: 10pt;
+    color: #64748b;
+    max-width: 650px;
+    line-height: 1.6;
+  }
+
+  .cover-modules-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 30px 0;
+  }
+
+  .cover-module-card {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 12px 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+
+  .cover-module-card h4 {
+    margin: 0 0 4px 0;
+    font-size: 10pt;
+    color: #1e40af;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cover-module-card p {
+    margin: 0;
+    font-size: 8.5pt;
+    color: #64748b;
+    line-height: 1.4;
+  }
+
+  .cover-footer {
+    border-top: 1px solid #cbd5e1;
+    padding-top: 15px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 8.5pt;
+    color: #64748b;
+  }
+
+  /* Document Typography */
+  h1 {
+    font-size: 15pt;
+    font-weight: 800;
+    color: #0f172a;
+    border-bottom: 2px solid #2563eb;
+    padding-bottom: 5px;
+    margin-top: 22px;
+    margin-bottom: 12px;
+    break-after: avoid;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .page-break {
+    page-break-before: always;
+  }
+
+  h2 {
+    font-size: 12pt;
+    font-weight: 700;
+    color: #1e3a8a;
+    margin-top: 16px;
+    margin-bottom: 8px;
+    break-after: avoid;
+    border-left: 3px solid #3b82f6;
+    padding-left: 8px;
+  }
+
+  h3 {
+    font-size: 10.5pt;
+    font-weight: 600;
+    color: #334155;
+    margin-top: 12px;
+    margin-bottom: 6px;
+    break-after: avoid;
+  }
+
+  p {
+    margin-top: 0;
+    margin-bottom: 8px;
+    text-align: justify;
+  }
+
+  ul, ol {
+    margin-top: 0;
+    margin-bottom: 10px;
+    padding-left: 20px;
+  }
+
+  li {
+    margin-bottom: 4px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0 14px 0;
+    font-size: 8.5pt;
+    break-inside: avoid;
+  }
+
+  th {
+    background-color: #f1f5f9;
+    color: #0f172a;
+    font-weight: 700;
+    text-align: left;
+    padding: 7px 9px;
+    border: 1px solid #cbd5e1;
+    text-transform: uppercase;
+    font-size: 7.8pt;
+    letter-spacing: 0.5px;
+  }
+
+  td {
+    padding: 6px 9px;
+    border: 1px solid #e2e8f0;
+    vertical-align: top;
+  }
+
+  tr:nth-child(even) td {
+    background-color: #f8fafc;
+  }
+
+  /* Callout Boxes */
+  .callout {
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 10px 0 14px 0;
+    font-size: 8.8pt;
+    line-height: 1.5;
+    break-inside: avoid;
+  }
+
+  .callout-info {
+    background-color: #eff6ff;
+    border-left: 4px solid #2563eb;
+    color: #1e40af;
+  }
+
+  .callout-success {
+    background-color: #f0fdf4;
+    border-left: 4px solid #16a34a;
+    color: #166534;
+  }
+
+  .callout-warning {
+    background-color: #fffbeb;
+    border-left: 4px solid #d97706;
+    color: #92400e;
+  }
+
+  .callout-danger {
+    background-color: #fef2f2;
+    border-left: 4px solid #dc2626;
+    color: #991b1b;
+  }
+
+  .callout-title {
+    font-weight: 700;
+    font-size: 9pt;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Badges & Tags */
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 9999px;
+    font-size: 7.5pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .badge-blue { background: #dbeafe; color: #1e40af; }
+  .badge-green { background: #dcfce7; color: #166534; }
+  .badge-amber { background: #fef3c7; color: #92400e; }
+  .badge-purple { background: #f3e8ff; color: #6b21a8; }
+  .badge-gray { background: #f1f5f9; color: #475569; }
+
+  /* Keyboard keys */
+  kbd {
+    display: inline-block;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-bottom: 2px solid #94a3b8;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 8pt;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 600;
+    color: #0f172a;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.05);
+  }
+
+  /* Wireframe visual diagram */
+  .wireframe {
+    background: #f8fafc;
+    border: 2px dashed #94a3b8;
+    border-radius: 8px;
+    padding: 12px;
+    margin: 12px 0 16px 0;
+    font-family: ui-monospace, monospace;
+    font-size: 8pt;
+    break-inside: avoid;
+  }
+
+  .wf-header {
+    background: #1e293b;
+    color: #ffffff;
+    padding: 8px 12px;
+    border-radius: 5px;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .wf-cols {
+    display: flex;
+    gap: 8px;
+  }
+
+  .wf-col {
+    flex: 1;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 5px;
+    padding: 8px;
+    min-height: 120px;
+  }
+
+  .wf-col-title {
+    font-weight: 700;
+    font-size: 8.5pt;
+    color: #1e40af;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+  }
+
+  .wf-item {
+    background: #f1f5f9;
+    border-radius: 3px;
+    padding: 4px 6px;
+    margin-bottom: 4px;
+    font-size: 7.5pt;
+  }
+
+  /* Section Numbering Pill */
+  .sec-num {
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 8.5pt;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    margin-right: 6px;
+  }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin: 10px 0;
+    break-inside: avoid;
+  }
+
+  .feature-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    border-top: 3px solid #3b82f6;
+  }
+
+  .feature-card h4 {
+    margin: 0 0 5px 0;
+    font-size: 9.5pt;
+    color: #0f172a;
+  }
+
+  .feature-card p {
+    margin: 0;
+    font-size: 8.2pt;
+    color: #475569;
+    line-height: 1.4;
+  }
+
+  /* Header & Footer styling for print */
+  .running-header {
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 4px;
+    margin-bottom: 12px;
+    font-size: 7.8pt;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ================= COVER PAGE ================= -->
+<div class="cover-page">
+  <div class="cover-header">
+    <div class="app-badge">Electro Hub Enterprise Edition</div>
+    <div class="cover-title">Point of Sale (POS)<br>Complete Functional Manual</div>
+    <div class="cover-subtitle">Comprehensive Technical & Operator Guide for Fast-Track Billing, Inventory, GST Compliance & Logistics</div>
+    <div class="cover-desc">
+      A complete reference manual documenting every operational feature, calculation formula, keyboard shortcut, multi-source inventory routing mechanism, and statutory compliance control built into the Electro Hub Point of Sale (POS) workstation with official A4 GST Tax Invoicing.
+    </div>
+  </div>
+
+  <div class="cover-modules-grid">
+    <div class="cover-module-card">
+      <h4>⚡ Dual Operational Modes</h4>
+      <p>Seamlessly toggle between <strong>Tax Invoice</strong> (live stock deduction & GST invoice) and <strong>Quotation / Estimate</strong> (zero stock commitment, 1-click invoice conversion).</p>
+    </div>
+    <div class="cover-module-card">
+      <h4>📦 Multi-Source Godown Routing</h4>
+      <p>Select stock deduction source per line item (Counter Shop vs Godowns), with automatic multi-godown split billing under a single GST invoice.</p>
+    </div>
+    <div class="cover-module-card">
+      <h4>🇮🇳 Full GST & e-Way Logistics</h4>
+      <p>Automatic intra-state (CGST+SGST) vs inter-state (IGST) detection, HSN breakdown grids, and statutory dispatch documentation for bills ₹1,00,000+.</p>
+    </div>
+    <div class="cover-module-card">
+      <h4>📄 Professional A4 GST Invoicing</h4>
+      <p>Standard Tally-compliant A4 Tax Invoices with comprehensive HSN summaries, bank NEFT/RTGS details, dynamic UPI payment QR, and terms.</p>
+    </div>
+  </div>
+
+  <div class="cover-footer">
+    <div><strong>Software Version:</strong> v0.1.0-Release</div>
+    <div><strong>Invoicing Standard:</strong> A4 GST Tax Invoice & Quotations</div>
+    <div><strong>Target Audience:</strong> Cashiers, Store Managers, Accountants & System Admins</div>
+  </div>
+</div>
+
+
+<!-- ================= SECTION 1: ARCHITECTURE & LAYOUT ================= -->
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 1: Architecture & Ergonomic Layout</span>
+</div>
+
+<h1><span class="sec-num">01</span> POS Architecture & 3-Column Interface</h1>
+
+<p>
+  The Electro Hub Point of Sale (POS) system is engineered around a <strong>Unified 3-Column Ergonomic Architecture</strong>. Unlike conventional POS applications that require switching between multiple popup tabs or modal screens to search products, adjust quantities, select customers, and apply discounts, Electro Hub presents the entire transaction lifecycle on a single, responsive canvas.
+</p>
+
+<div class="wireframe">
+  <div class="wf-header">
+    <span>[MODE SWITCHER: Tax Invoice | Quotation]  [Bill No: 26-15]  [Date Picker]</span>
+    <span>[Status: Ready]  [📋 Quotations (3)]</span>
+  </div>
+  <div class="wf-cols">
+    <div class="wf-col" style="flex: 1.2;">
+      <div class="wf-col-title">COLUMN 1: CUSTOMER & CART ITEMS</div>
+      <div class="wf-item">👤 Customer Search & Quick Add (+ New)</div>
+      <div class="wf-item">📦 Line Item 1: Qty [10] Rate [₹850] [Shop ▾]</div>
+      <div class="wf-item">📦 Line Item 2: Qty [5] Rate [₹2,200] [Main Godown ▾]</div>
+      <div class="wf-item">➕ Quick Split from Godown button</div>
+    </div>
+    <div class="wf-col" style="flex: 1.1;">
+      <div class="wf-col-title">COLUMN 2: SUMMARY, PAY & DISPATCH</div>
+      <div class="wf-item">📊 Subtotal: ₹19,500.00 | Disc: ₹0.00</div>
+      <div class="wf-item">⚖️ GST: CGST ₹1,755 + SGST ₹1,755 (18%)</div>
+      <div class="wf-item" style="font-weight:bold; background:#e2e8f0;">💰 NET PAYABLE: ₹23,010.00</div>
+      <div class="wf-item">💳 Payment: Cash | UPI | Card | Cheque</div>
+      <div class="wf-item">🚚 Dispatch & e-Way Bill Details</div>
+      <div class="wf-item" style="background:#2563eb; color:#fff; text-align:center; font-weight:bold;">🖨️ SAVE & PRINT (Ctrl+S)</div>
+    </div>
+    <div class="wf-col" style="flex: 1.3;">
+      <div class="wf-col-title">COLUMN 3: FAST CATALOG & SEARCH</div>
+      <div class="wf-item">🔍 Omni-Search (Product Name, Model, HSN)</div>
+      <div class="wf-item">🏷️ Category Filter Pills (All, Wire, Fans, Bulbs)</div>
+      <div class="wf-item">🛍️ Live Product Cards with Shop & Godown Stock</div>
+      <div class="wf-item">⌨️ Arrow Up / Down + Enter to Add</div>
+      <div class="wf-item">🖱️ One-Click Card Addition</div>
+    </div>
+  </div>
+</div>
+
+<div class="feature-grid">
+  <div class="feature-card">
+    <h4>Column 1: Customer & Cart</h4>
+    <p>Manages customer binding, item quantities, per-item rate overrides, live available stock indicators, and stock source routing (Counter Shop vs specific Godowns).</p>
+  </div>
+  <div class="feature-card">
+    <h4>Column 2: Summary & Checkout</h4>
+    <p>Real-time calculation engine computing gross total, percentage or flat discounts, intra/inter-state GST breakdown, round-off, multi-mode payment, and e-Way logistics.</p>
+  </div>
+  <div class="feature-card">
+    <h4>Column 3: Product Search & Catalog</h4>
+    <p>High-speed search bar supporting multi-parameter queries (Name, Model, HSN), category filter pills, live stock availability badges, and keyboard navigation.</p>
+  </div>
+  <div class="feature-card">
+    <h4>Top Header Navigation Bar</h4>
+    <p>Houses the dual-mode switch (Tax Invoice vs Quotation), sequential bill number counter, date picker, active context banners, and the Quotations Register drawer.</p>
+  </div>
+</div>
+
+
+<!-- ================= SECTION 2: DUAL OPERATING MODES ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 2: Operating Modes & Top Controls</span>
+</div>
+
+<h1><span class="sec-num">02</span> Dual Operating Modes: Tax Invoice vs Quotation</h1>
+
+<p>
+  Electro Hub POS features an instantaneous <strong>Dual Operating Mode Switcher</strong> located at the top-left of the billing screen. Cashiers can switch between formal GST Tax Invoices and Price Quotations / Estimates without losing active cart items or resetting customer selections.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 20%;">Attribute</th>
+      <th style="width: 40%;">Tax Invoice Mode</th>
+      <th style="width: 40%;">Quotation / Estimate Mode</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Core Purpose</strong></td>
+      <td>Finalized sale to customer with immediate financial settlement.</td>
+      <td>Price quotation or estimate issued to prospect or client.</td>
+    </tr>
+    <tr>
+      <td><strong>Stock Deduction</strong></td>
+      <td><span class="badge badge-green">Immediate Deduction</span> Decrements stock from selected Shop or Warehouse.</td>
+      <td><span class="badge badge-amber">Zero Deduction</span> Leaves inventory quantities completely untouched.</td>
+    </tr>
+    <tr>
+      <td><strong>Numbering Sequence</strong></td>
+      <td>Compact sequential invoice number (e.g., <code>26-1</code>, <code>26-2</code>).</td>
+      <td>Dedicated estimate sequence with quotation prefix (e.g., <code>QT-26-1</code>).</td>
+    </tr>
+    <tr>
+      <td><strong>Financial Ledger</strong></td>
+      <td>Updates Cash / Bank ledgers and records customer Due/Khata balances.</td>
+      <td>Creates no financial accounting liability or journal entry.</td>
+    </tr>
+    <tr>
+      <td><strong>GST Reporting</strong></td>
+      <td>Logged into GSTR-1, GSTR-3B registers, DayBook, and Sales Reports.</td>
+      <td>Excluded from statutory tax filings and audit registers.</td>
+    </tr>
+    <tr>
+      <td><strong>Print Layout</strong></td>
+      <td>Full A4 Tally-style Tax Invoice with GSTIN, HSN Grid, e-Way, Bank Details.</td>
+      <td>Clean A4 "Quotation / Estimate Voucher" omitting Tax Invoice legal headers.</td>
+    </tr>
+    <tr>
+      <td><strong>Conversion</strong></td>
+      <td>Permanent historical record (editable by authorized admin).</td>
+      <td>Can be converted into a full Tax Invoice in 1 click at any future date.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Header Status Indicators & Context Banners</h2>
+<p>
+  When performing special operations such as editing past transactions or converting quotes, POS displays contextual colored pill banners across the header to prevent cashier confusion:
+</p>
+
+<ul>
+  <li><strong>Normal New Billing Mode:</strong> Header displays <em>"Next Bill: [Number]"</em> with live counter preview and standard green theme.</li>
+  <li><strong>Editing Bill Mode (<span class="badge badge-amber">Editing Bill #...</span>):</strong> Triggered when editing a historical invoice from DayBook or Sales Reports. Stock adjustments are dynamically calculated as deltas. Features a red <em>"Cancel Edit"</em> button to discard modifications safely.</li>
+  <li><strong>Converting Quotation Mode (<span class="badge badge-blue">Converting Quote QT-... to Invoice</span>):</strong> Triggered when loading a quote into POS. The system validates inventory availability for all quote items in real-time. Features a <em>"Cancel Convert"</em> button.</li>
+  <li><strong>Editing Quotation Mode (<span class="badge badge-purple">Editing Quote QT-...</span>):</strong> Allows updating items, quantities, or terms on an existing quotation without creating duplicate entries.</li>
+  <li><strong>Viewing Bill (Read-Only) (<span class="badge badge-gray">Viewing Bill (Read-Only)</span>):</strong> Displayed when staff members without billing modification permissions inspect past records.</li>
+</ul>
+
+<div class="callout callout-info">
+  <div class="callout-title">💡 Pro-Tip: Live Bill Counter Intelligence</div>
+  Electro Hub dynamically queries the database for the highest existing bill sequence number for the current financial year. Even if you cancel an unsaved bill or restart the application, the invoice sequence always stays sequential and gap-free.
+</div>
+
+
+<!-- ================= SECTION 3: CUSTOMER MANAGEMENT ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 3: Customer Management & GST State Detection</span>
+</div>
+
+<h1><span class="sec-num">03</span> Customer Management & GST State Routing</h1>
+
+<p>
+  Customer handling in Electro Hub is designed for rapid retail throughput while maintaining full B2B GST compliance. Cashiers can complete retail sales anonymously or search and create detailed business client profiles on the fly.
+</p>
+
+<h2>Customer Selection Modes</h2>
+<ul>
+  <li>
+    <strong>Walk-in Customer (Default):</strong> Selected by default whenever the POS screen loads. Designed for fast retail sales where customer contact details or GSTIN are not required. Payments are treated as immediate Cash/UPI/Card settlement.
+  </li>
+  <li>
+    <strong>Registered Customer Search:</strong> Clicking the Customer input opens a search dropdown. Typing any 2 characters instantly searches across <em>Customer Name</em>, <em>Mobile Number</em>, or <em>GSTIN</em>.
+  </li>
+  <li>
+    <strong>Inline "Quick Add Customer" Modal:</strong> If a customer is not found, clicking the <kbd>+ New Customer</kbd> button opens an inline creation dialog without losing the cart contents. Cashiers can enter:
+    <ul>
+      <li><strong>Full Name</strong> (Required)</li>
+      <li><strong>Phone / Mobile Number</strong> (Used for billing records and customer contacts)</li>
+      <li><strong>GSTIN</strong> (15-character statutory Tax Identification Number)</li>
+      <li><strong>Address & State</strong> (Used for inter-state tax routing)</li>
+    </ul>
+    Upon saving, the new customer is instantly selected in the active bill.
+  </li>
+</ul>
+
+<h2>Intelligent Inter-State vs Intra-State GST Auto-Routing</h2>
+<p>
+  Electro Hub eliminates manual tax calculation errors by automatically comparing the customer's state with the active Company's state (extracted from the GSTIN or Company profile):
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25%;">Transaction Type</th>
+      <th style="width: 35%;">Condition</th>
+      <th style="width: 40%;">Tax Splitting Applied</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Intra-State Sale (Local)</strong></td>
+      <td>Customer State == Company State (or Walk-in Customer)</td>
+      <td>
+        <span class="badge badge-blue">CGST + SGST</span><br>
+        50% Central Tax + 50% State Tax<br>
+        <em>Example on 18% GST: 9% CGST + 9% SGST</em>
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Inter-State Sale (Out of State)</strong></td>
+      <td>Customer State != Company State (e.g., Company in TN, Customer in KA)</td>
+      <td>
+        <span class="badge badge-purple">IGST (Integrated Tax)</span><br>
+        100% Integrated Tax applied<br>
+        <em>Example on 18% GST: 18% IGST</em>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ GST State Code Auto-Extraction</div>
+  When a 15-digit GSTIN is entered for a customer (e.g., <code>27AAPCA1234F1Z5</code>), the system automatically parses the first two digits (<code>27</code>) as the State Code (Maharashtra) and routes taxes accordingly without requiring manual state selection.
+</div>
+
+
+<!-- ================= SECTION 4: CART & MULTI-SOURCE INVENTORY ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 4: Cart Management & Godown Routing</span>
+</div>
+
+<h1><span class="sec-num">04</span> Cart Line Items & Multi-Source Inventory Routing</h1>
+
+<p>
+  Electro Hub features an advanced <strong>Multi-Source Inventory Engine</strong> directly in the POS cart. Retail electrical and hardware stores often store high-turnover items at the front counter while keeping bulk stock in one or more separate warehouses (Godowns).
+</p>
+
+<h2>Cart Item Structure & Interactive Controls</h2>
+<p>Each line item added to the cart exposes the following controls:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 22%;">Element</th>
+      <th style="width: 28%;">Functionality</th>
+      <th style="width: 50%;">Operational Behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Product Description</strong></td>
+      <td>Product Name, HSN Code, Model & Category</td>
+      <td>Displays full product identification details required on GST Tax Invoices.</td>
+    </tr>
+    <tr>
+      <td><strong>Stock Source Selector</strong></td>
+      <td>Dropdown: <code>[Counter Shop]</code> or <code>[Warehouse Name]</code></td>
+      <td>
+        Determines where stock will be deducted from. Switching the source dynamically updates the displayed available quantity.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Live Stock Indicator</strong></td>
+      <td>Color-coded badge (e.g. <code>Avail: 42 Pcs</code>)</td>
+      <td>
+        <span class="badge badge-green">Green</span> if healthy stock. <span class="badge badge-amber">Amber</span> if stock is low (&lt; 5 units). Prevents cashiers from over-selling.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Quantity Controls</strong></td>
+      <td><code>[-]</code>, <code>[+]</code> buttons and Direct Number input</td>
+      <td>
+        Direct numeric input allows entering large quantities instantly. Typing a quantity higher than available stock triggers an instant warning banner.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Unit Rate (Price)</strong></td>
+      <td>Editable Currency Input (₹)</td>
+      <td>
+        Defaults to product's catalog selling price. Cashiers with price adjustment privileges can override the rate directly for trade discounts.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Line Total</strong></td>
+      <td>Computed <code>Rate × Qty</code></td>
+      <td>Updates in real time as quantities or rates change.</td>
+    </tr>
+    <tr>
+      <td><strong>Remove Item</strong></td>
+      <td>Trash Can Button (<kbd>Delete</kbd>)</td>
+      <td>Removes the line item immediately and recalculates invoice totals.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Multi-Source Split Billing ("+ Add from Godown")</h2>
+<p>
+  A frequent operational challenge occurs when a customer needs more units than what is currently on the shop shelf, but the remaining units are stored in the warehouse. 
+</p>
+
+<div class="callout callout-success">
+  <div class="callout-title">✨ Practical Example: Multi-Godown Split Fulfillment</div>
+  <strong>Scenario:</strong> A contractor visits to buy <strong>25 units</strong> of <em>Ceiling Fan 1200mm</em>. The Counter Shop only has <strong>5 units</strong> on display, while <strong>Godown A</strong> has 50 units.<br><br>
+  <strong>Electro Hub Solution:</strong>
+  <ol style="margin-bottom:0;">
+    <li>Add <em>Ceiling Fan 1200mm</em> to cart. Set source to <strong>Shop</strong> with Qty = <code>5</code>.</li>
+    <li>Click the inline <strong>"+ Add from Godown"</strong> button beneath the item.</li>
+    <li>Select <strong>Godown A</strong> and enter Qty = <code>20</code>.</li>
+  </ol>
+  Both lines appear on the same invoice! The customer receives one unified A4 GST Tax Invoice for 25 fans, while the warehouse dispatch records accurately route 5 units from Counter and 20 units from Godown A.
+</div>
+
+
+<!-- ================= SECTION 5: CALCULATIONS & DISCOUNTS ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 5: Pricing Engine, Discounts & Tax Calculations</span>
+</div>
+
+<h1><span class="sec-num">05</span> Pricing Engine, Discounts & Tax Calculations</h1>
+
+<p>
+  Column 2 of the POS interface houses the real-time financial calculation engine. Every price adjustment, discount, or tax setting recalculates instantly with sub-millisecond precision.
+</p>
+
+<h2>Mathematical Breakdown & Computation Order</h2>
+<p>Electro Hub follows standard Indian GST statutory rounding and computation order:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 15%;">Step</th>
+      <th style="width: 25%;">Calculation Component</th>
+      <th style="width: 60%;">Formula & Accounting Logic</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Step 1</strong></td>
+      <td>Gross Item Amount</td>
+      <td><code>Gross = Line Rate × Quantity</code> for each cart item.</td>
+    </tr>
+    <tr>
+      <td><strong>Step 2</strong></td>
+      <td>Subtotal</td>
+      <td><code>Subtotal = Σ (Gross Item Amounts)</code></td>
+    </tr>
+    <tr>
+      <td><strong>Step 3</strong></td>
+      <td>Invoice Discount</td>
+      <td>
+        Supports dual modes:
+        <ul>
+          <li><strong>Percentage Mode (%):</strong> <code>Discount Amount = Subtotal × (Discount % / 100)</code></li>
+          <li><strong>Flat Rupee Mode (₹):</strong> Direct absolute rupee deduction.</li>
+        </ul>
+        <em>Discounts are distributed pro-rata across line items to accurately calculate reduced GST taxable values.</em>
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Step 4</strong></td>
+      <td>Taxable Value</td>
+      <td><code>Taxable Value = Subtotal - Discount Amount</code></td>
+    </tr>
+    <tr>
+      <td><strong>Step 5</strong></td>
+      <td>GST Computation</td>
+      <td>
+        Computed per item HSN tax bracket:
+        <ul>
+          <li><strong>Intra-State:</strong> <code>CGST = Taxable × (GST% / 200)</code> and <code>SGST = Taxable × (GST% / 200)</code></li>
+          <li><strong>Inter-State:</strong> <code>IGST = Taxable × (GST% / 100)</code></li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Step 6</strong></td>
+      <td>Exact Total</td>
+      <td><code>Exact Total = Taxable Value + CGST + SGST (or IGST)</code></td>
+    </tr>
+    <tr>
+      <td><strong>Step 7</strong></td>
+      <td>Automatic Round-Off</td>
+      <td>
+        <code>Net Payable = Round(Exact Total)</code><br>
+        Rounds to the nearest whole Rupee (e.g. ₹1,450.40 becomes ₹1,450.00; ₹1,450.60 becomes ₹1,451.00). The round-off differential is printed on the invoice.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Tax-Exclusive vs Tax-Inclusive Pricing Preferences</h2>
+<p>
+  Stores can configure their global tax method under <strong>Settings → Taxes & GST</strong>:
+</p>
+<ul>
+  <li><strong>Tax Exclusive (Standard Wholesale):</strong> The entered product price represents the base cost before tax. GST is added on top of the rate during checkout.</li>
+  <li><strong>Tax Inclusive (Retail MRP):</strong> The product selling price includes GST. The POS engine back-calculates the taxable base price using: <code>Base = MRP / (1 + GST% / 100)</code> and extracts the embedded CGST/SGST amounts automatically.</li>
+</ul>
+
+
+<!-- ================= SECTION 6: PAYMENTS & CREDIT KHATA ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 6: Payment Methods & Credit Ledger</span>
+</div>
+
+<h1><span class="sec-num">06</span> Payment Modes & Customer Khata (Credit)</h1>
+
+<p>
+  Electro Hub supports both full settlements and split partial payments. Every transaction automatically updates company cash books and individual customer ledgers.
+</p>
+
+<h2>Supported Payment Channels</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 20%;">Payment Method</th>
+      <th style="width: 30%;">Drawer / Information Captured</th>
+      <th style="width: 50%;">Accounting Impact</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>💵 Cash</strong></td>
+      <td>Tendered currency. Immediate settlement.</td>
+      <td>Debits Physical Cash Drawer. Logged in DayBook cash summary.</td>
+    </tr>
+    <tr>
+      <td><strong>📱 UPI / QR Code</strong></td>
+      <td>Reference ID / Transaction UTR.</td>
+      <td>Debits Primary Bank Account. Verified against bank QR receipt.</td>
+    </tr>
+    <tr>
+      <td><strong>💳 Card (POS Terminal)</strong></td>
+      <td>Card Machine Authorization Code.</td>
+      <td>Debits Card Settlement Account.</td>
+    </tr>
+    <tr>
+      <td><strong>🏦 Cheque</strong></td>
+      <td>
+        Opens Cheque Drawer:
+        <ul>
+          <li><strong>Cheque Number</strong> (6 digits)</li>
+          <li><strong>Bank Name</strong> (e.g., SBI, HDFC)</li>
+          <li><strong>Cheque Date</strong> (Post-Dated support)</li>
+        </ul>
+      </td>
+      <td>Logs Cheque under "Uncleared Cheques Register" until deposited and cleared.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Partial Payments & Credit (Khata / Due) Workflow</h2>
+<p>
+  In B2B wholesale and contractor billing, customers frequently make partial down payments and carry the remaining balance on credit:
+</p>
+
+<div class="callout callout-warning">
+  <div class="callout-title">📋 Partial Payment Handling</div>
+  <strong>How to Record a Credit Sale:</strong>
+  <ol>
+    <li>Select or create the registered Customer (Credit cannot be extended to anonymous Walk-in customers).</li>
+    <li>The <strong>"Amount Paid"</strong> input box defaults to the Net Grand Total.</li>
+    <li>Manually type the amount received today (e.g., Grand Total = ₹50,000; Customer pays ₹20,000 cash).</li>
+    <li>The system dynamically computes: <code>Pending Balance = ₹30,000.00</code>.</li>
+    <li>Upon clicking <strong>Save & Print</strong>:
+      <ul>
+        <li>₹20,000 is credited to the Cash ledger.</li>
+        <li>₹30,000 is automatically debited to the Customer's <strong>Due Khata</strong>.</li>
+        <li>The printed A4 Tax Invoice displays: <em>Paid Amount: ₹20,000.00 | Balance Due: ₹30,000.00</em>.</li>
+      </ul>
+    </li>
+  </ol>
+</div>
+
+
+<!-- ================= SECTION 7: DISPATCH & E-WAY BILL ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 7: Dispatch, Transport & e-Way Logistics</span>
+</div>
+
+<h1><span class="sec-num">07</span> Dispatch, Transport & e-Way Bill Compliance</h1>
+
+<p>
+  Under Indian GST statutory guidelines, consignments exceeding <strong>₹1,00,000</strong> (or interstate consignments exceeding ₹50,000) require mandatory transportation documentation and e-Way Bill declarations.
+</p>
+
+<h2>Statutory Threshold Alert Banner</h2>
+<p>
+  Whenever the Net Invoice value reaches or crosses <strong>₹1,00,000</strong>, the POS interface automatically flashes an amber regulatory compliance badge:
+</p>
+
+<div class="callout callout-danger">
+  <div class="callout-title">🚚 Mandatory Dispatch & e-Way Alert (Bills ≥ ₹1,00,000)</div>
+  <em>"Invoice value exceeds ₹1,00,000. Statutory Indian GST e-Way Bill & Dispatch information is required before generating the final Tax Invoice."</em>
+  <br>The checkout button prompts cashiers to click <strong>"+ Enter Required Dispatch Details"</strong> to open the logistics modal.
+</div>
+
+<h2>Dispatch Details Modal Fields</h2>
+<p>Clicking the Dispatch section in Column 2 opens the comprehensive transport modal:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 30%;">Logistics Field</th>
+      <th style="width: 25%;">Format / Example</th>
+      <th style="width: 45%;">Tally & GST Compliance Requirement</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>e-Way Bill Number</strong></td>
+      <td>12-digit number (e.g. <code>281098472910</code>)</td>
+      <td>Government e-Way portal reference number. Printed prominently on A4 invoice header.</td>
+    </tr>
+    <tr>
+      <td><strong>Motor Vehicle Number</strong></td>
+      <td>Vehicle Reg No. (e.g. <code>MH12AB1234</code>)</td>
+      <td>Mandatory Part-B vehicle detail for goods transit inspection.</td>
+    </tr>
+    <tr>
+      <td><strong>Delivery Note / Dispatch Doc</strong></td>
+      <td>Doc reference (e.g. <code>DN-2026-89</code>)</td>
+      <td>Internal warehouse delivery challan or dispatch authorization number.</td>
+    </tr>
+    <tr>
+      <td><strong>Dispatched Through / Carrier</strong></td>
+      <td>Transport Agency (e.g. <code>VRL Logistics</code>)</td>
+      <td>Name of logistics service provider or courier agency.</td>
+    </tr>
+    <tr>
+      <td><strong>Bill of Lading / LR-RR No.</strong></td>
+      <td>Lorry Receipt No. (e.g. <code>LR-88219</code>)</td>
+      <td>Transporter's official consignment note / consignment tracking number.</td>
+    </tr>
+    <tr>
+      <td><strong>Destination / Delivery Place</strong></td>
+      <td>City / Town (e.g. <code>Pune MIDC</code>)</td>
+      <td>Destination hub where goods are delivered.</td>
+    </tr>
+    <tr>
+      <td><strong>Terms of Delivery</strong></td>
+      <td>Text (e.g. <code>Door Delivery / Freight Paid</code>)</td>
+      <td>Commercial delivery agreement printed in the terms block.</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<!-- ================= SECTION 8: PRODUCT SEARCH & CATALOG ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 8: Product Catalog & Fast Lookup</span>
+</div>
+
+<h1><span class="sec-num">08</span> Product Search, Fast Lookup & Catalog Navigation</h1>
+
+<p>
+  Column 3 provides high-speed inventory lookup designed to support extensive electrical inventories (wires, cables, modular switches, fans, luminaires, and circuit breakers) with zero latency.
+</p>
+
+<h2>Omni-Search Query Engine</h2>
+<p>
+  The top search bar evaluates user input against multiple product attributes simultaneously in real time:
+</p>
+<ul>
+  <li><strong>Product Name:</strong> e.g., typing <code>"Copper Wire"</code> finds all gauges, brands, and roll lengths.</li>
+  <li><strong>Model / Catalog Number:</strong> e.g., typing <code>"CF-1200"</code> or <code>"LB-9W"</code> brings up exact specifications.</li>
+  <li><strong>HSN Code:</strong> e.g., typing <code>"8544"</code> displays all insulated electrical cables and wires.</li>
+  <li><strong>Category Filter Pills:</strong> Cashiers can click category tags (<em>Switches, Cables, Fans, LED, Appliances</em>) to instantly narrow down products.</li>
+</ul>
+
+<h2>Fast Interactive Catalog Cards</h2>
+<p>
+  Each product card in the catalog presents rich, actionable details:
+</p>
+<ul>
+  <li><strong>Item Description:</strong> Product title, HSN code, and model code.</li>
+  <li><strong>Unit Pricing:</strong> Displayed selling rate with tax indicators.</li>
+  <li><strong>Live Multi-Location Stock:</strong> Clear badges showing Counter Shop stock and Godown stock.</li>
+  <li><strong>One-Click Addition:</strong> Clicking any card immediately adds the item to the cart or increments its quantity if already present.</li>
+</ul>
+
+<h2>Keyboard-Driven Fast Catalog Navigation</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25%;">Key Combination</th>
+      <th style="width: 75%;">Action Performed in Product Search</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><kbd>Arrow Down (↓)</kbd></td>
+      <td>Moves highlight down through the product search results list.</td>
+    </tr>
+    <tr>
+      <td><kbd>Arrow Up (↑)</kbd></td>
+      <td>Moves highlight up through the product search results list.</td>
+    </tr>
+    <tr>
+      <td><kbd>Enter (↵)</kbd></td>
+      <td>Adds the currently highlighted product card directly into the cart.</td>
+    </tr>
+    <tr>
+      <td><kbd>Escape (Esc)</kbd></td>
+      <td>Clears the current search query and resets the product list to all items.</td>
+    </tr>
+  </tbody>
+</table>
+
+
+<!-- ================= SECTION 9: QUOTATIONS LIFECYCLE ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 9: Quotations & Estimates Lifecycle</span>
+</div>
+
+<h1><span class="sec-num">09</span> Quotations & Estimates Management</h1>
+
+<p>
+  In electrical contracting and commercial trade, clients frequently demand detailed price estimates before confirming purchases. Electro Hub includes a complete, end-to-end Quotation Lifecycle module directly inside POS.
+</p>
+
+<h2>Quotation Lifecycle Workflow</h2>
+<ol>
+  <li>
+    <strong>Creating an Estimate:</strong> Click the mode switcher to toggle from <em>Tax Invoice</em> to <strong>Quotation</strong>. Add products, adjust custom rates or discounts, select the client, and click <strong>"Save & Print Quotation"</strong>.
+  </li>
+  <li>
+    <strong>Zero Stock Impact:</strong> The quotation is safely recorded in the database, but <strong>no inventory is deducted</strong>. The store stock remains 100% available for cash retail customers.
+  </li>
+  <li>
+    <strong>Quotation Register Modal:</strong> Click the <strong>"📋 Quotations"</strong> button on the header bar to browse all historical quotes. Filter by:
+    <ul>
+      <li><span class="badge badge-amber">Pending:</span> Active quotes awaiting client confirmation.</li>
+      <li><span class="badge badge-green">Converted:</span> Quotes that were confirmed and converted into Tax Invoices.</li>
+      <li><span class="badge badge-gray">All:</span> Complete chronological archive.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>1-Click Conversion to Tax Invoice:</strong>
+    When the customer returns with the purchase order:
+    <ul>
+      <li>Open the Quotations register and click <strong>"Convert to Invoice"</strong>.</li>
+      <li>POS automatically switches to Tax Invoice mode and loads all items, quantities, and agreed prices into the cart.</li>
+      <li>The system verifies real-time inventory levels across shop and warehouses.</li>
+      <li>Upon finalizing the sale, the original quotation is automatically marked as <strong>"Converted"</strong> with a direct link to the new Invoice Number.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Editing & Updating:</strong> Click <strong>"Edit"</strong> on any pending quotation to update quantities or negotiated pricing without creating orphan records.
+  </li>
+</ol>
+
+
+<!-- ================= SECTION 10: A4 GST PRINTING ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 10: Standard A4 GST Tax Invoices & Quotations</span>
+</div>
+
+<h1><span class="sec-num">10</span> Standard A4 GST Tax Invoices & Quotations</h1>
+
+<p>
+  Electro Hub is designed exclusively around <strong>Standard A4 GST Tax Invoicing</strong>. Every invoice and quotation is formatted according to statutory Indian accounting standards and Tally invoice conventions for professional presentation, complete legal compliance, and easy archival.
+</p>
+
+<h2>Standard Tally-Compliant A4 GST Tax Invoice Architecture</h2>
+<p>The generated A4 Tax Invoice contains the following comprehensive sections:</p>
+
+<ul>
+  <li>
+    <strong>Statutory 3-Tier Copy Title:</strong>
+    Prints formal copy designations: <em>"Original for Buyer"</em> (Customer copy), <em>"Duplicate for Transporter"</em> (Transit inspection copy), or <em>"Triplicate for Supplier"</em> (Store accounting copy).
+  </li>
+  <li>
+    <strong>Seller (Consignor) Header:</strong>
+    Store Name, Registered Trade Name, Address, Contact Telephone, Email, 15-digit GSTIN, State Name, and 2-digit State Code.
+  </li>
+  <li>
+    <strong>Buyer (Bill to) & Consignee (Ship to) Blocks:</strong>
+    Full legal customer name, registered business billing address, delivery site address, GSTIN, and State Code.
+  </li>
+  <li>
+    <strong>Invoice & Logistics Summary Grid:</strong>
+    Invoice Number, e-Way Bill Number, Invoice Date, Delivery Note reference, Mode/Terms of Payment, Dispatched through, Destination, Bill of Lading / LR-RR Number, and Motor Vehicle Number.
+  </li>
+  <li>
+    <strong>Itemized Billing Grid:</strong>
+    Serial Number, Description of Goods, HSN/SAC Code, Quantity, Unit of Measurement (Pcs, Box, Roll, Mtr), Rate per unit, Item Discount %, and Taxable Amount.
+  </li>
+  <li>
+    <strong>Mandatory GST HSN Summary Table:</strong>
+    A dedicated statutory tax breakdown table grouping all items by HSN code, displaying:
+    <ul>
+      <li>HSN / SAC Code</li>
+      <li>Taxable Value</li>
+      <li>Central Tax Rate & Amount (CGST)</li>
+      <li>State Tax Rate & Amount (SGST)</li>
+      <li>Integrated Tax Rate & Amount (IGST for interstate)</li>
+      <li>Total Tax Amount</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Amount Chargeable in Words:</strong>
+    Official Indian Rupee currency words notation (e.g. <em>"INR Twenty Three Thousand Ten Only"</em>) for legal validity.
+  </li>
+  <li>
+    <strong>Bank Remittance Details:</strong>
+    Bank Name, Account Holder Name, Account Number, Branch IFSC Code, and dynamic UPI QR code for direct digital payment settlement.
+  </li>
+  <li>
+    <strong>Terms & Declaration Block:</strong>
+    Standard commercial terms, jurisdiction clauses, interest terms on overdue balances, and Authorized Signatory seal & signature block.
+  </li>
+</ul>
+
+<h2>Standard A4 Quotation / Estimate Voucher</h2>
+<p>
+  When printing in Quotation Mode, the system formats a clean A4 Quotation document with full item pricing, company branding, terms of quotation validity, and signature lines while properly omitting Tax Invoice legal headers.
+</p>
+
+
+<!-- ================= SECTION 11: KEYBOARD SHORTCUTS ================= -->
+<div class="page-break"></div>
+<div class="running-header">
+  <span>Electro Hub POS Functional Manual</span>
+  <span>Section 11: Cashier Keyboard Shortcuts Cheat Sheet</span>
+</div>
+
+<h1><span class="sec-num">11</span> Cashier Keyboard Shortcuts Cheat Sheet</h1>
+
+<p>
+  Experienced cashiers can operate Electro Hub at maximum velocity using ergonomic keyboard shortcuts. Keep this cheat sheet handy at every billing counter:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25%;">Shortcut Key</th>
+      <th style="width: 35%;">Action Performed</th>
+      <th style="width: 40%;">Operational Context</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><kbd>Ctrl</kbd> + <kbd>S</kbd></td>
+      <td><strong>Save & Print A4 Invoice</strong></td>
+      <td>Instant checkout. Records sale in database and opens print dialog for A4 Tax Invoice.</td>
+    </tr>
+    <tr>
+      <td><kbd>Enter (↵)</kbd></td>
+      <td><strong>Add Product / Confirm Modal</strong></td>
+      <td>Adds highlighted catalog item to cart, or completes confirmation dialogs.</td>
+    </tr>
+    <tr>
+      <td><kbd>Arrow Down (↓)</kbd></td>
+      <td><strong>Next Product</strong></td>
+      <td>Navigates down through search results.</td>
+    </tr>
+    <tr>
+      <td><kbd>Arrow Up (↑)</kbd></td>
+      <td><strong>Previous Product</strong></td>
+      <td>Navigates up through search results.</td>
+    </tr>
+    <tr>
+      <td><kbd>Escape (Esc)</kbd></td>
+      <td><strong>Close / Cancel / Clear</strong></td>
+      <td>Closes any open modal (Customer, Dispatch, Quotations) or clears search input.</td>
+    </tr>
+    <tr>
+      <td><kbd>Tab</kbd></td>
+      <td><strong>Field Traversal</strong></td>
+      <td>Jumps smoothly between Quantity, Rate, and Discount fields in the cart.</td>
+    </tr>
+    <tr>
+      <td><kbd>Delete</kbd></td>
+      <td><strong>Remove Cart Line</strong></td>
+      <td>Removes selected line item from active cart.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Completed Sale Dialog Rapid Workflow</h2>
+<p>
+  When an invoice is saved, the <strong>Completed Sale Modal</strong> opens automatically:
+</p>
+<ul>
+  <li>Pressing <kbd>Enter</kbd> or clicking <strong>"Print Invoice"</strong> immediately opens the print preview for the official A4 Tax Invoice.</li>
+  <li>Pressing <kbd>Escape</kbd> closes the modal and instantly resets the POS for the next customer in line.</li>
+</ul>
+
+<div class="callout callout-info">
+  <div class="callout-title">🔒 Multi-Company Data Isolation in POS</div>
+  Electro Hub features complete enterprise-grade database isolation. When switching companies via the top-left sidebar, POS automatically binds to the new company's SQLite database. Product stocks, customer directories, invoice numbering sequences, and tax settings remain 100% strictly isolated between businesses.
+</div>
+
+<br><br>
+<div style="text-align: center; border-top: 1px solid #cbd5e1; padding-top: 15px; font-size: 8.5pt; color: #64748b;">
+  <strong>Electro Hub Inventory & POS Management System</strong> &bull; End of Functional Manual &bull; Confidential & Proprietary
+</div>
+
+</body>
+</html>

@@ -536,7 +536,12 @@ export default function Contacts() {
 
       const subtotal = (detail.net_amount || 0) - (detail.tax_amount || 0) + (detail.discount || 0);
       const originalPriceBasis = items.reduce((sum, i) => sum + (i.selling_price * i.cart_qty), 0);
-      const isInclusive = Math.abs((detail.net_amount || 0) - (originalPriceBasis - (detail.discount || 0))) < 0.1;
+      const netAmount = Number(detail.net_amount || 0);
+      const taxAmount = Number(detail.tax_amount || 0);
+      const discountAmount = Number(detail.discount || 0);
+      const diffInclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount));
+      const diffExclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount + taxAmount));
+      const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
       const taxMethod = isInclusive ? 'inclusive' : 'exclusive';
 
       setPrintData({
