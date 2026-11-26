@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, Package, ShoppingCart, Settings, Users, Truck, IndianRupee, 
-  Receipt, RotateCcw, FileText, ChevronLeft, ChevronRight, Building2, ChevronDown 
+  Receipt, RotateCcw, FileText, ChevronLeft, ChevronRight, Building2, ChevronDown,
+  Clock, Sparkles, X, KeyRound
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
@@ -18,7 +19,8 @@ import SettingsPage from './pages/Settings';
 import Activation from './pages/Activation';
 import DayBook from './pages/DayBook';
 import { AuthProvider, useAuth } from './lib/AuthContext';
-import { isAppActivated } from './lib/db';
+import { getLicenseInfo, activateApp, type LicenseInfo } from './lib/db';
+import * as OTPAuth from 'otpauth';
 import { CompanyModal } from './components/CompanyModal';
 import { getActiveCompany } from './lib/companies';
 
@@ -28,7 +30,7 @@ function Sidebar() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [showCompanyModal, setShowCompanyModal] = useState(false);
-  const activeCompany = getActiveCompany();
+  const [activeCompany, setActiveCompany] = useState(getActiveCompany);
   const [isExpanded, setIsExpanded] = useState(() => {
     return localStorage.getItem('sidebarExpanded') !== 'false';
   });
@@ -62,6 +64,7 @@ function Sidebar() {
   useEffect(() => {
     const handleStorage = () => {
       setShowShortcuts(localStorage.getItem('hideShortcuts') !== 'true');
+      setActiveCompany(getActiveCompany());
     };
     window.addEventListener('storage', handleStorage);
     window.addEventListener('preferencesUpdated', handleStorage);
@@ -104,9 +107,12 @@ function Sidebar() {
         // Don't interfere if they are typing in a textarea
         if (active && active.tagName === 'TEXTAREA') return;
 
-        // If in a text input, don't override Left/Right (let the cursor move)
+        // If in a text input, don't override Left/Right (let the cursor move), and don't override Up/Down in number inputs
         if (active && active.tagName === 'INPUT') {
           const type = (active as HTMLInputElement).type;
+          if (type === 'number' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+            return;
+          }
           if (type !== 'radio' && type !== 'checkbox' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
              return;
           }
@@ -259,8 +265,125 @@ function Sidebar() {
   );
 }
 
-function MainLayout() {
+function UpgradeLicenseModal({ isOpen, onClose, onSuccess }: { isOpen: boolean; onClose: () => void; onSuccess: () => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleUpgrade = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (code.length !== 6) {
+      setError('Please enter the full 6-digit key.');
+      return;
+    }
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const fullTotp = new OTPAuth.TOTP({
+        issuer: 'Inventory Software',
+        label: 'License Key',
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        secret: OTPAuth.Secret.fromBase32('JBSWY3DPEHPK3PXP')
+      });
+
+      const isFullValid = fullTotp.validate({ token: code.trim(), window: 1 });
+      if (isFullValid !== null) {
+        await activateApp('full');
+        alert('Software successfully upgraded to Full License!');
+        onSuccess();
+        onClose();
+      } else {
+        setError('Invalid activation key. Please check the code and try again.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+        <div className="flex justify-between items-center mb-1">
+          <h2 className="text-base font-bold text-slate-900">Activate Full License</h2>
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="text-slate-400 hover:text-slate-700 p-1 rounded-md hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <p className="text-xs text-slate-500 mb-5 leading-relaxed">
+          Enter your 6-digit key to activate the full version.
+        </p>
+
+        <form onSubmit={handleUpgrade} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Activation Key
+            </label>
+            <div className="relative">
+              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <KeyRound className="w-4 h-4" />
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={code}
+                onChange={(e) => {
+                  setError('');
+                  setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+                }}
+                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-mono text-base font-semibold tracking-wider focus:bg-white focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-500/15 transition-all"
+                autoFocus
+                required
+              />
+            </div>
+          </div>
+
+          {error && (
+            <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 text-xs font-medium rounded-lg">
+              {error}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100 mt-4">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              disabled={isLoading || code.length !== 6}
+              className={`px-4 py-2 text-xs font-bold text-white rounded-lg shadow-sm transition-all cursor-pointer ${
+                code.length === 6 && !isLoading
+                  ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
+                  : 'bg-slate-200 text-slate-400 shadow-none cursor-not-allowed'
+              }`}
+            >
+              {isLoading ? 'Verifying...' : 'Activate'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function MainLayout({ licenseInfo, onRefreshLicense }: { licenseInfo: LicenseInfo | null; onRefreshLicense: () => void }) {
   const { user, isLoading } = useAuth();
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   if (isLoading) {
     return <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-500">Loading...</div>;
@@ -271,44 +394,80 @@ function MainLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-canvas font-sans overflow-hidden text-body">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/daybook" element={<DayBook />} />
-          <Route path="/pos" element={<POS />} />
-          <Route path="/purchases" element={<Purchases />} />
-          <Route path="/payments" element={<Payments />} />
-          <Route path="/expenses" element={<Expenses />} />
-          <Route path="/returns" element={<Returns />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/contacts" element={<Contacts />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
-      </main>
+    <div className="flex h-screen bg-canvas font-sans overflow-hidden text-body flex-col">
+      {licenseInfo?.isTrial && (
+        <div className="bg-amber-400 text-slate-950 font-medium px-4 py-2 flex items-center justify-between text-xs shadow-xs border-b border-amber-500 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-5 h-5 rounded-full bg-amber-950/15 flex items-center justify-center text-slate-950">
+              <Clock className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-slate-950 text-xs">
+              <strong className="font-bold">15-Day Free Trial:</strong> {licenseInfo.daysRemaining} day{licenseInfo.daysRemaining === 1 ? '' : 's'} remaining.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowUpgradeModal(true)}
+            className="bg-slate-950 hover:bg-slate-800 text-white font-bold px-3 py-1 rounded-md text-[11px] shadow-sm transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>Upgrade to Full License</span>
+          </button>
+        </div>
+      )}
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-y-auto">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/daybook" element={<DayBook />} />
+            <Route path="/pos" element={<POS />} />
+            <Route path="/purchases" element={<Purchases />} />
+            <Route path="/payments" element={<Payments />} />
+            <Route path="/expenses" element={<Expenses />} />
+            <Route path="/returns" element={<Returns />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/inventory" element={<Inventory />} />
+            <Route path="/contacts" element={<Contacts />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </main>
+      </div>
+
+      <UpgradeLicenseModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        onSuccess={onRefreshLicense}
+      />
     </div>
   );
 }
 
 function App() {
   const [activated, setActivated] = useState<boolean | null>(null);
+  const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
+
+  const checkLicense = () => {
+    getLicenseInfo().then(info => {
+      setLicenseInfo(info);
+      setActivated(info.isActivated);
+    });
+  };
 
   useEffect(() => {
-    isAppActivated().then(setActivated);
+    checkLicense();
   }, []);
 
   if (activated === null) return <div className="flex h-screen items-center justify-center bg-slate-900 text-slate-500">Checking License...</div>;
 
   if (!activated) {
-    return <Activation onActivated={() => setActivated(true)} />;
+    return <Activation onActivated={checkLicense} />;
   }
 
   return (
     <AuthProvider>
       <Router>
-        <MainLayout />
+        <MainLayout licenseInfo={licenseInfo} onRefreshLicense={checkLicense} />
       </Router>
     </AuthProvider>
   );

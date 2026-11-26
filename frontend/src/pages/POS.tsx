@@ -34,7 +34,6 @@ export default function POS() {
   
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<number>(0);
-  const [discountType, setDiscountType] = useState<'amount' | 'percentage'>('percentage');
   const [isProcessing, setIsProcessing] = useState(false);
   
   const [customerId, setCustomerId] = useState<number | ''>('');
@@ -241,48 +240,85 @@ export default function POS() {
     try {
       const s = await getSaleById(id);
       if (s) {
+        if (editSaleId && (s.status === 'Returned' || (s.items && s.items.some((i: any) => (i.returned_quantity || 0) > 0)))) {
+          alert(`Bill ${s.invoice_number || id} has return records and cannot be edited. Opening in Read-Only View mode.`);
+          navigate(`/pos?viewId=${id}`, { replace: true });
+          return;
+        }
+
         setLoadedSaleRecord(s);
         setEditingInvoiceNumber(s.invoice_number || `Bill #${s.id}`);
         if (s.date) setBillDate(s.date.split(' ')[0]);
         if (s.customer_id) setCustomerId(s.customer_id);
 
         // Detect original tax method & GST status from the saved bill data
-        const originalPriceBasis = (s.items || []).reduce(
-          (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
-          0
-        );
-        const netAmount = Number(s.net_amount || 0);
-        const taxAmount = Number(s.tax_amount || 0);
-        const discountAmount = Number(s.discount || 0);
-        const diffInclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount));
-        const diffExclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount + taxAmount));
-        const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
-        setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
-        setLoadedSaleEnableGST(taxAmount > 0);
+        if (s.tax_method) {
+          setLoadedSaleTaxMethod(s.tax_method);
+        } else {
+          const originalPriceBasis = (s.items || []).reduce(
+            (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
+            0
+          );
+          let itemDiscs = 0;
+          (s.items || []).forEach((i: any) => {
+            itemDiscs += Number(i.discount || 0);
+          });
+          const netAmount = Number(s.net_amount || 0);
+          const taxAmount = Number(s.tax_amount || 0);
+          const discountAmount = Number(s.discount || 0);
+          const netBasis = Math.max(0, originalPriceBasis - itemDiscs - discountAmount);
+          const diffInclusive = Math.abs(netAmount - netBasis);
+          const diffExclusive = Math.abs(netAmount - (netBasis + taxAmount));
+          const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
+          setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
+        }
+        setLoadedSaleEnableGST(Number(s.tax_amount || 0) > 0);
 
-        setCart(s.items.map((i: any) => ({
-          id: i.product_id,
-          name: i.name,
-          model: i.model,
-          selling_price: i.unit_price,
-          cart_qty: i.quantity,
-          unit: i.unit,
-          hsn_code: i.hsn_code,
-          cgst_percentage: i.cgst_percentage,
-          sgst_percentage: i.sgst_percentage,
-          gst_percentage: i.gst_percentage,
-          stock_quantity: i.stock_quantity,
-          shop_stock: i.shop_stock,
-          warehouse_stocks: i.warehouse_stocks,
-          item_source_type: i.item_source_type || 'shop',
-          item_warehouse_id: i.item_warehouse_id || null,
-          item_warehouse_name: i.item_warehouse_name || (i.item_source_type === 'warehouse' ? 'Godown' : 'Main Shop'),
-          cart_key: `${i.product_id}_${i.item_source_type || 'shop'}_${i.item_warehouse_id || 0}`
-        } as CartItem)));
+        setCart(s.items.map((i: any) => {
+          const lineGross = Number(i.unit_price || 0) * Number(i.quantity || 0);
+          let pct = Number(i.discount_percent || 0);
+          if ((pct <= 0 || pct > 100) && Number(i.discount || 0) > 0 && lineGross > 0) {
+            pct = Math.min(100, Math.max(0, Number(((Number(i.discount) / lineGross) * 100).toFixed(2))));
+          } else {
+            pct = Math.min(100, Math.max(0, pct));
+          }
+          return {
+            id: i.product_id,
+            name: i.name,
+            model: i.model,
+            selling_price: i.unit_price,
+            cart_qty: i.quantity,
+            unit: i.unit,
+            hsn_code: i.hsn_code,
+            cgst_percentage: i.cgst_percentage,
+            sgst_percentage: i.sgst_percentage,
+            gst_percentage: i.gst_percentage,
+            stock_quantity: i.stock_quantity,
+            shop_stock: i.shop_stock,
+            warehouse_stocks: i.warehouse_stocks,
+            item_source_type: i.item_source_type || 'shop',
+            item_warehouse_id: i.item_warehouse_id || null,
+            item_warehouse_name: i.item_warehouse_name || (i.item_source_type === 'warehouse' ? 'Godown' : 'Main Shop'),
+            cart_key: `${i.product_id}_${i.item_source_type || 'shop'}_${i.item_warehouse_id || 0}`,
+            discount: pct,
+            discount_type: 'percentage',
+            discount_percent: pct,
+            returned_quantity: Number(i.returned_quantity || 0)
+          } as any;
+        }));
         if (s.source_type) setSourceType(s.source_type as 'shop' | 'warehouse');
         if (s.source_warehouse_id) setSourceWarehouseId(s.source_warehouse_id);
-        setDiscountType('amount');
-        setDiscount(s.discount);
+
+        let billPct = Number(s.discount_percent || 0);
+        if ((billPct <= 0 || billPct > 100) && Number(s.discount || 0) > 0) {
+          const totalGross = (s.items || []).reduce((sum: number, it: any) => sum + (Number(it.unit_price || 0) * Number(it.quantity || 0)), 0);
+          const totalItemDiscs = (s.items || []).reduce((sum: number, it: any) => sum + Number(it.discount || 0), 0);
+          const netBasis = Math.max(1, totalGross - totalItemDiscs);
+          billPct = Math.min(100, Math.max(0, Number(((Number(s.discount) / netBasis) * 100).toFixed(2))));
+        } else {
+          billPct = Math.min(100, Math.max(0, billPct));
+        }
+        setDiscount(billPct);
         setPaidAmount(s.paid_amount || 0);
         if (s.payment_method) setPaymentMethod(s.payment_method as any);
 
@@ -353,6 +389,8 @@ export default function POS() {
     setEditingQuotationNumber(null);
     setCart([]);
     setDiscount(0);
+    setCustomerId('');
+    setPaidAmount('');
     setQuotationNotes('');
     setLoadedSaleTaxMethod(null);
     setLoadedSaleEnableGST(null);
@@ -362,7 +400,7 @@ export default function POS() {
 
   // Global Edit Mode Lock flag for app-wide navigation prevention
   useEffect(() => {
-    if (activeSaleId || editingQuotationId) {
+    if (activeSaleId || editingQuotationId || convertingQuotationId || cart.length > 0) {
       (window as any).__isEditingActive = true;
     } else {
       (window as any).__isEditingActive = false;
@@ -370,7 +408,7 @@ export default function POS() {
     return () => {
       (window as any).__isEditingActive = false;
     };
-  }, [activeSaleId, editingQuotationId]);
+  }, [activeSaleId, editingQuotationId, convertingQuotationId, cart.length]);
 
   // Global Escape key handler to cancel active bill or quotation edit
   useEffect(() => {
@@ -389,6 +427,10 @@ export default function POS() {
           setIsQuotationsModalOpen(false);
           return;
         }
+        if (isCustomerDropdownOpen) {
+          setIsCustomerDropdownOpen(false);
+          return;
+        }
 
         if (activeSaleId) {
           e.preventDefault();
@@ -403,7 +445,7 @@ export default function POS() {
     };
     window.addEventListener('keydown', handleGlobalEsc);
     return () => window.removeEventListener('keydown', handleGlobalEsc);
-  }, [activeSaleId, editingQuotationId, completedSaleModal, isQuotationsModalOpen, isQuickCustomerModalOpen, location.state]);
+  }, [activeSaleId, editingQuotationId, completedSaleModal, isQuotationsModalOpen, isQuickCustomerModalOpen, showDispatchModal, isCustomerDropdownOpen, location.state]);
 
   async function loadProducts(st?: 'shop' | 'warehouse', whId?: number | null) {
     try {
@@ -553,7 +595,10 @@ export default function POS() {
           item_warehouse_id: targetWhId,
           item_warehouse_name: targetWhName,
           stock_quantity: targetAvailStock,
-          cart_key: targetKey
+          cart_key: targetKey,
+          discount: 0,
+          discount_type: 'percentage',
+          discount_percent: 0
         }
       ];
     });
@@ -636,14 +681,30 @@ export default function POS() {
 
   function updateRate(cartKey: string, newRate: number) {
     if (isViewOnly) return;
+    const cleanRate = Math.max(0, Number(newRate) || 0);
     setCart(prev => prev.map(item => 
-      getItemCartKey(item) === cartKey ? { ...item, selling_price: newRate } : item
+      getItemCartKey(item) === cartKey ? { ...item, selling_price: cleanRate } : item
     ));
   }
 
   function removeFromCart(cartKey: string) {
     if (isViewOnly) return;
     setCart(prev => prev.filter(item => getItemCartKey(item) !== cartKey));
+  }
+
+  function updateItemDiscount(cartKey: string, val: number) {
+    if (isViewOnly) return;
+    setCart(prev => prev.map(item => {
+      if (getItemCartKey(item) !== cartKey) return item;
+      let cleanVal = Math.max(0, val);
+      if (cleanVal > 100) cleanVal = 100;
+      return {
+        ...item,
+        discount: cleanVal,
+        discount_percent: cleanVal,
+        discount_type: 'percentage'
+      };
+    }));
   }
 
   // Global Ctrl + S shortcut handler
@@ -663,6 +724,10 @@ export default function POS() {
         e.preventDefault();
         e.stopPropagation();
         handleSaveActionRef.current?.();
+      } else if (e.key === 'F1') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
@@ -719,7 +784,7 @@ export default function POS() {
         return;
       }
     }
-    const finalPaidAmount = effectivePaidAmount;
+    const finalPaidAmount = Math.min(grandTotal, effectivePaidAmount);
     if (finalPaidAmount < 0) {
       alert("Paid amount cannot be negative.");
       paidInputRef.current?.focus();
@@ -798,7 +863,10 @@ export default function POS() {
           sourceType === 'warehouse' ? Number(sourceWarehouseId) : null,
           billDate,
           hasDispatchDetails ? dispatchDetails : null,
-          effectiveSalesTaxMethod
+          effectiveSalesTaxMethod,
+          sanitizedDiscount,
+          roundOff,
+          taxableValueSum
         );
         alert('Sale bill updated successfully!');
       } else {
@@ -818,7 +886,10 @@ export default function POS() {
           sourceType === 'warehouse' ? Number(sourceWarehouseId) : null,
           billDate,
           hasDispatchDetails ? dispatchDetails : null,
-          effectiveSalesTaxMethod
+          effectiveSalesTaxMethod,
+          sanitizedDiscount,
+          roundOff,
+          taxableValueSum
         );
         invoiceNumber = typeof saleRes === 'string' ? saleRes : saleRes.invoiceNumber;
         const actualSaleId = (typeof saleRes === 'string' ? (Number(invoiceNumber.split('-')[1]) || 0) : saleRes.saleId) || 0;
@@ -856,6 +927,9 @@ export default function POS() {
         discount: discountAmount,
         netAmount: grandTotal,
         paidAmount: finalPaidAmount,
+        roundOff,
+        taxableAmount: taxableValueSum,
+        itemDiscountAmount: totalItemDiscounts,
         paymentMethod,
         chequeNo: paymentMethod === 'Cheque' ? posChequeNo.trim() : undefined,
         bankName: paymentMethod === 'Cheque' ? posBankName.trim() : undefined,
@@ -874,7 +948,6 @@ export default function POS() {
       setPosBankName('');
       setCart([]);
       setDiscount(0);
-      setDiscountType('percentage');
       setCustomerId('');
       setPaidAmount(0);
       setBillDate(getLocalDate());
@@ -926,7 +999,10 @@ export default function POS() {
           finalCustomerId,
           quotationNotes,
           billDate,
-          effectiveSalesTaxMethod
+          effectiveSalesTaxMethod,
+          sanitizedDiscount,
+          roundOff,
+          taxableValueSum
         );
         alert('Quotation updated successfully!');
       } else {
@@ -939,7 +1015,10 @@ export default function POS() {
           finalCustomerId,
           quotationNotes,
           billDate,
-          effectiveSalesTaxMethod
+          effectiveSalesTaxMethod,
+          sanitizedDiscount,
+          roundOff,
+          taxableValueSum
         );
       }
       
@@ -966,7 +1045,10 @@ export default function POS() {
         taxMethod: effectiveEnableSalesGST ? effectiveSalesTaxMethod : undefined,
         discount: discountAmount,
         netAmount: grandTotal,
-        paidAmount: 0
+        paidAmount: 0,
+        roundOff,
+        taxableAmount: taxableValueSum,
+        itemDiscountAmount: totalItemDiscounts
       };
 
       (window as any).__isEditingActive = false;
@@ -975,7 +1057,6 @@ export default function POS() {
 
       setCart([]);
       setDiscount(0);
-      setDiscountType('percentage');
       setCustomerId('');
       setQuotationNotes('');
       setEditingQuotationId(null);
@@ -1009,36 +1090,48 @@ export default function POS() {
       }
 
       if (fullQ.items) {
-        setCart(fullQ.items.map((i: any) => ({
-          id: i.product_id,
-          name: i.name,
-          model: i.model,
-          selling_price: i.unit_price,
-          cart_qty: i.quantity,
-          unit: i.unit,
-          hsn_code: i.hsn_code,
-          cgst_percentage: i.cgst_percentage,
-          sgst_percentage: i.sgst_percentage,
-          gst_percentage: i.gst_percentage,
-          stock_quantity: i.stock_quantity
-        } as CartItem)));
+        setCart(fullQ.items.map((i: any) => {
+          const lineGross = Number(i.unit_price || 0) * Number(i.quantity || 0);
+          let pct = Number(i.discount_percent || 0);
+          if ((pct <= 0 || pct > 100) && Number(i.discount || 0) > 0 && lineGross > 0) {
+            pct = Math.min(100, Math.max(0, Number(((Number(i.discount) / lineGross) * 100).toFixed(2))));
+          } else {
+            pct = Math.min(100, Math.max(0, pct));
+          }
+          return {
+            id: i.product_id,
+            name: i.name,
+            model: i.model,
+            selling_price: i.unit_price,
+            cart_qty: i.quantity,
+            unit: i.unit,
+            hsn_code: i.hsn_code,
+            cgst_percentage: i.cgst_percentage,
+            sgst_percentage: i.sgst_percentage,
+            gst_percentage: i.gst_percentage,
+            stock_quantity: i.stock_quantity,
+            discount: pct,
+            discount_type: 'percentage',
+            discount_percent: pct,
+            returned_quantity: Number(i.returned_quantity || 0)
+          } as any;
+        }));
 
-        const originalPriceBasis = fullQ.items.reduce(
-          (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
-          0
-        );
-        const qNet = Number(fullQ.net_amount || 0);
-        const qTax = Number(fullQ.tax_amount || 0);
-        const qDisc = Number(fullQ.discount || 0);
-        const diffInc = Math.abs(qNet - (originalPriceBasis - qDisc));
-        const diffExc = Math.abs(qNet - (originalPriceBasis - qDisc + qTax));
-        const isInclusive = qTax > 0 ? (diffInc < diffExc) : (diffInc <= 1.0);
-        setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
-        setLoadedSaleEnableGST(qTax > 0);
+        const qTaxMethod = (fullQ.tax_method as 'exclusive' | 'inclusive') || 'exclusive';
+        setLoadedSaleTaxMethod(qTaxMethod);
+        setLoadedSaleEnableGST(Number(fullQ.tax_amount || 0) > 0);
       }
 
-      setDiscountType('amount');
-      setDiscount(fullQ.discount);
+      let qBillPct = Number((fullQ as any).discount_percent || 0);
+      if ((qBillPct <= 0 || qBillPct > 100) && Number(fullQ.discount || 0) > 0) {
+        const totalGross = (fullQ.items || []).reduce((sum: number, it: any) => sum + (Number(it.unit_price || 0) * Number(it.quantity || 0)), 0);
+        const totalItemDiscs = (fullQ.items || []).reduce((sum: number, it: any) => sum + Number(it.discount || 0), 0);
+        const netBasis = Math.max(1, totalGross - totalItemDiscs);
+        qBillPct = Math.min(100, Math.max(0, Number(((Number(fullQ.discount) / netBasis) * 100).toFixed(2))));
+      } else {
+        qBillPct = Math.min(100, Math.max(0, qBillPct));
+      }
+      setDiscount(qBillPct);
       setQuotationNotes(fullQ.notes || '');
       setEditingQuotationId(fullQ.id);
       setEditingQuotationNumber(fullQ.quotation_number);
@@ -1065,36 +1158,48 @@ export default function POS() {
       }
 
       if (fullQ.items) {
-        setCart(fullQ.items.map((i: any) => ({
-          id: i.product_id,
-          name: i.name,
-          model: i.model,
-          selling_price: i.unit_price,
-          cart_qty: i.quantity,
-          unit: i.unit,
-          hsn_code: i.hsn_code,
-          cgst_percentage: i.cgst_percentage,
-          sgst_percentage: i.sgst_percentage,
-          gst_percentage: i.gst_percentage,
-          stock_quantity: i.stock_quantity
-        } as CartItem)));
+        setCart(fullQ.items.map((i: any) => {
+          const lineGross = Number(i.unit_price || 0) * Number(i.quantity || 0);
+          let pct = Number(i.discount_percent || 0);
+          if ((pct <= 0 || pct > 100) && Number(i.discount || 0) > 0 && lineGross > 0) {
+            pct = Math.min(100, Math.max(0, Number(((Number(i.discount) / lineGross) * 100).toFixed(2))));
+          } else {
+            pct = Math.min(100, Math.max(0, pct));
+          }
+          return {
+            id: i.product_id,
+            name: i.name,
+            model: i.model,
+            selling_price: i.unit_price,
+            cart_qty: i.quantity,
+            unit: i.unit,
+            hsn_code: i.hsn_code,
+            cgst_percentage: i.cgst_percentage,
+            sgst_percentage: i.sgst_percentage,
+            gst_percentage: i.gst_percentage,
+            stock_quantity: i.stock_quantity,
+            discount: pct,
+            discount_type: 'percentage',
+            discount_percent: pct,
+            returned_quantity: Number(i.returned_quantity || 0)
+          } as any;
+        }));
 
-        const originalPriceBasis = fullQ.items.reduce(
-          (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
-          0
-        );
-        const qNet = Number(fullQ.net_amount || 0);
-        const qTax = Number(fullQ.tax_amount || 0);
-        const qDisc = Number(fullQ.discount || 0);
-        const diffInc = Math.abs(qNet - (originalPriceBasis - qDisc));
-        const diffExc = Math.abs(qNet - (originalPriceBasis - qDisc + qTax));
-        const isInclusive = qTax > 0 ? (diffInc < diffExc) : (diffInc <= 1.0);
-        setLoadedSaleTaxMethod(isInclusive ? 'inclusive' : 'exclusive');
-        setLoadedSaleEnableGST(qTax > 0);
+        const qTaxMethod = (fullQ.tax_method as 'exclusive' | 'inclusive') || 'exclusive';
+        setLoadedSaleTaxMethod(qTaxMethod);
+        setLoadedSaleEnableGST(Number(fullQ.tax_amount || 0) > 0);
       }
 
-      setDiscountType('amount');
-      setDiscount(fullQ.discount);
+      let qBillPct = Number((fullQ as any).discount_percent || 0);
+      if ((qBillPct <= 0 || qBillPct > 100) && Number(fullQ.discount || 0) > 0) {
+        const totalGross = (fullQ.items || []).reduce((sum: number, it: any) => sum + (Number(it.unit_price || 0) * Number(it.quantity || 0)), 0);
+        const totalItemDiscs = (fullQ.items || []).reduce((sum: number, it: any) => sum + Number(it.discount || 0), 0);
+        const netBasis = Math.max(1, totalGross - totalItemDiscs);
+        qBillPct = Math.min(100, Math.max(0, Number(((Number(fullQ.discount) / netBasis) * 100).toFixed(2))));
+      } else {
+        qBillPct = Math.min(100, Math.max(0, qBillPct));
+      }
+      setDiscount(qBillPct);
       setPaidAmount(0);
       setEditingQuotationId(null);
       setEditingQuotationNumber(null);
@@ -1122,31 +1227,33 @@ export default function POS() {
         if (c) custDetails = c;
       }
 
-      const mappedCart: CartItem[] = (fullQ.items || []).map((i: any) => ({
-        id: i.product_id,
-        name: i.name,
-        model: i.model,
-        selling_price: i.unit_price,
-        cart_qty: i.quantity,
-        unit: i.unit,
-        hsn_code: i.hsn_code,
-        cgst_percentage: i.cgst_percentage,
-        sgst_percentage: i.sgst_percentage,
-        gst_percentage: i.gst_percentage,
-        stock_quantity: i.stock_quantity
-      } as CartItem));
+      const mappedCart: CartItem[] = (fullQ.items || []).map((i: any) => {
+        const lineGross = Number(i.unit_price || 0) * Number(i.quantity || 0);
+        let pct = Number(i.discount_percent || 0);
+        if ((pct <= 0 || pct > 100) && Number(i.discount || 0) > 0 && lineGross > 0) {
+          pct = Math.min(100, Math.max(0, Number(((Number(i.discount) / lineGross) * 100).toFixed(2))));
+        } else {
+          pct = Math.min(100, Math.max(0, pct));
+        }
+        return {
+          id: i.product_id,
+          name: i.name,
+          model: i.model,
+          selling_price: i.unit_price,
+          cart_qty: i.quantity,
+          unit: i.unit,
+          hsn_code: i.hsn_code,
+          cgst_percentage: i.cgst_percentage,
+          sgst_percentage: i.sgst_percentage,
+          gst_percentage: i.gst_percentage,
+          stock_quantity: i.stock_quantity,
+          discount: pct,
+          discount_type: 'percentage',
+          discount_percent: pct
+        } as CartItem;
+      });
 
-      const qOriginalBasis = (fullQ.items || []).reduce(
-        (sum: number, i: any) => sum + (Number(i.unit_price || 0) * Number(i.quantity || 0)),
-        0
-      );
-      const qNet = Number(fullQ.net_amount || 0);
-      const qTax = Number(fullQ.tax_amount || 0);
-      const qDisc = Number(fullQ.discount || 0);
-      const diffInc = Math.abs(qNet - (qOriginalBasis - qDisc));
-      const diffExc = Math.abs(qNet - (qOriginalBasis - qDisc + qTax));
-      const isQInclusive = qTax > 0 ? (diffInc < diffExc) : (diffInc <= 1.0);
-      const qTaxMethod = qTax > 0 ? (isQInclusive ? 'inclusive' : 'exclusive') : undefined;
+      const qTaxMethod = (fullQ.tax_amount || 0) > 0 ? ((fullQ.tax_method as 'exclusive' | 'inclusive') || 'exclusive') : undefined;
 
       setPrintData({
         invoiceNumber: fullQ.quotation_number,
@@ -1161,7 +1268,10 @@ export default function POS() {
         taxMethod: qTaxMethod,
         discount: fullQ.discount,
         netAmount: fullQ.net_amount,
-        paidAmount: 0
+        paidAmount: 0,
+        roundOff: fullQ.round_off,
+        taxableAmount: fullQ.taxable_amount,
+        itemDiscountAmount: fullQ.item_discount_amount
       });
 
       setTimeout(() => {
@@ -1186,19 +1296,28 @@ export default function POS() {
     }
   }
 
-  // Step 1: Calculate the Original Price (Basis)
+  // Step 1: Calculate Gross Price and Product-Wise Discounts (% only)
   let originalPriceBasis = 0;
+  let totalItemDiscounts = 0;
+  let netPriceBasisAfterItemDiscounts = 0;
+
   cart.forEach(item => {
-    originalPriceBasis += item.selling_price * item.cart_qty;
+    const lineGross = item.selling_price * item.cart_qty;
+    const discPct = Math.min(100, Math.max(0, item.discount_percent !== undefined ? item.discount_percent : (item.discount || 0)));
+    const lineDiscAmt = (lineGross * discPct) / 100;
+    const lineNet = Math.max(0, lineGross - lineDiscAmt);
+
+    originalPriceBasis += lineGross;
+    totalItemDiscounts += lineDiscAmt;
+    netPriceBasisAfterItemDiscounts += lineNet;
   });
 
-  // Step 2: Calculate the Displayed Discount Amount
-  const displayDiscountAmount = discountType === 'percentage' 
-    ? (originalPriceBasis * discount) / 100 
-    : discount;
+  // Step 2: Calculate the Displayed Bill Discount Amount (% only)
+  const sanitizedDiscount = Math.min(100, Math.max(0, discount));
+  const displayDiscountAmount = (netPriceBasisAfterItemDiscounts * sanitizedDiscount) / 100;
 
-  // Calculate the ratio of discount to original price
-  const discountRatio = originalPriceBasis > 0 ? (displayDiscountAmount / originalPriceBasis) : 0;
+  // Bill discount ratio applied to remaining net after line discounts
+  const discountRatio = netPriceBasisAfterItemDiscounts > 0 ? Math.min(1, displayDiscountAmount / netPriceBasisAfterItemDiscounts) : 0;
 
   // Step 3: Iterate through items and calculate Taxable Value and Tax per item
   let taxableValueSum = 0;
@@ -1206,21 +1325,29 @@ export default function POS() {
   const taxBreakdown = { cgst: {} as Record<number, number>, sgst: {} as Record<number, number> };
 
   cart.forEach(item => {
-    const originalItemPrice = item.selling_price * item.cart_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
+    const lineGross = item.selling_price * item.cart_qty;
+    const discPct = Math.min(100, Math.max(0, item.discount_percent !== undefined ? item.discount_percent : (item.discount || 0)));
+    const lineDiscAmt = (lineGross * discPct) / 100;
+    const lineNet = Math.max(0, lineGross - lineDiscAmt);
+    const discountedItemPrice = lineNet * (1 - discountRatio);
+    
+    let cgst = item.cgst_percentage || 0;
+    let sgst = item.sgst_percentage || 0;
+    const totalGst = item.gst_percentage !== undefined ? item.gst_percentage : (cgst + sgst);
+    if (totalGst > 0 && cgst === 0 && sgst === 0) {
+      cgst = totalGst / 2;
+      sgst = totalGst / 2;
+    }
+    const gstPercent = cgst + sgst;
     
     let taxableValue = discountedItemPrice;
     if (effectiveEnableSalesGST && effectiveSalesTaxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
+      taxableValue = gstPercent > 0 ? discountedItemPrice / (1 + (gstPercent / 100)) : discountedItemPrice;
     }
 
     taxableValueSum += taxableValue;
 
     if (effectiveEnableSalesGST) {
-      const cgst = item.cgst_percentage || 0;
-      const sgst = item.sgst_percentage || 0;
-      
       if (cgst > 0) {
         taxBreakdown.cgst[cgst] = (taxBreakdown.cgst[cgst] || 0) + (taxableValue * (cgst / 100));
       }
@@ -1232,17 +1359,117 @@ export default function POS() {
     }
   });
 
-  const exactGrandTotal = isViewOnly && loadedSaleRecord ? loadedSaleRecord.net_amount : Math.max(0, taxableValueSum + taxSum);
-  const grandTotal = isViewOnly && loadedSaleRecord ? loadedSaleRecord.net_amount : Math.round(exactGrandTotal);
-  const roundOff = isViewOnly && loadedSaleRecord
-    ? Number((loadedSaleRecord.net_amount - (loadedSaleRecord.total_amount + (effectiveSalesTaxMethod === 'inclusive' ? 0 : loadedSaleRecord.tax_amount) - (loadedSaleRecord.discount || 0))).toFixed(2))
-    : grandTotal - exactGrandTotal;
+  if (isViewOnly && loadedSaleRecord) {
+    if (loadedSaleRecord.status === 'Returned') {
+      taxableValueSum = 0;
+      taxSum = 0;
+      taxBreakdown.cgst = {};
+      taxBreakdown.sgst = {};
+    } else {
+      if (loadedSaleRecord.taxable_amount !== undefined && loadedSaleRecord.taxable_amount !== null) {
+        taxableValueSum = loadedSaleRecord.taxable_amount;
+      }
+      if (loadedSaleRecord.item_discount_amount !== undefined && loadedSaleRecord.item_discount_amount !== null) {
+        totalItemDiscounts = loadedSaleRecord.item_discount_amount;
+      }
+      if (loadedSaleRecord.items && Array.isArray(loadedSaleRecord.items)) {
+        const dbCgst: Record<number, number> = {};
+        const dbSgst: Record<number, number> = {};
+        let activeTaxSum = 0;
+        let hasLineTaxes = false;
+
+        loadedSaleRecord.items.forEach((it: any) => {
+          const cgstPct = it.cgst_percentage || 0;
+          const sgstPct = it.sgst_percentage || 0;
+          const origQty = it.quantity || 1;
+          const retQty = Math.min(origQty, Number(it.returned_quantity || 0));
+          const activeQty = Math.max(0, origQty - retQty);
+          const activeRatio = origQty > 0 ? (activeQty / origQty) : 1;
+          const lineTax = (it.tax || 0) * activeRatio;
+
+          if (cgstPct > 0 || sgstPct > 0) {
+            hasLineTaxes = true;
+            const halfTax = lineTax > 0 ? (lineTax / 2) : 0;
+            if (cgstPct > 0) dbCgst[cgstPct] = (dbCgst[cgstPct] || 0) + halfTax;
+            if (sgstPct > 0) dbSgst[sgstPct] = (dbSgst[sgstPct] || 0) + halfTax;
+            activeTaxSum += lineTax;
+          }
+        });
+
+        // Scale active line taxes to match loadedSaleRecord.tax_amount exactly
+        const expectedTax = loadedSaleRecord.tax_amount !== undefined && loadedSaleRecord.tax_amount !== null
+          ? Number(Number(loadedSaleRecord.tax_amount).toFixed(2))
+          : Number(activeTaxSum.toFixed(2));
+
+        if (expectedTax === 0) {
+          taxBreakdown.cgst = {};
+          taxBreakdown.sgst = {};
+        } else if (hasLineTaxes && activeTaxSum > 0) {
+          const scale = expectedTax / activeTaxSum;
+          const scaledCgst: Record<number, number> = {};
+          const scaledSgst: Record<number, number> = {};
+          let allocatedTax = 0;
+          for (const [k, v] of Object.entries(dbCgst)) {
+            const val = Math.round(v * scale * 100) / 100;
+            scaledCgst[Number(k)] = val;
+            allocatedTax += val;
+          }
+          for (const [k, v] of Object.entries(dbSgst)) {
+            const val = Math.round(v * scale * 100) / 100;
+            scaledSgst[Number(k)] = val;
+            allocatedTax += val;
+          }
+          const diff = Math.round((expectedTax - allocatedTax) * 100) / 100;
+          if (diff !== 0) {
+            const firstSgstKey = Number(Object.keys(scaledSgst)[0]);
+            const firstCgstKey = Number(Object.keys(scaledCgst)[0]);
+            if (!isNaN(firstSgstKey) && scaledSgst[firstSgstKey] !== undefined) {
+              scaledSgst[firstSgstKey] = Number((scaledSgst[firstSgstKey] + diff).toFixed(2));
+            } else if (!isNaN(firstCgstKey) && scaledCgst[firstCgstKey] !== undefined) {
+              scaledCgst[firstCgstKey] = Number((scaledCgst[firstCgstKey] + diff).toFixed(2));
+            }
+          }
+          taxBreakdown.cgst = scaledCgst;
+          taxBreakdown.sgst = scaledSgst;
+        } else if (hasLineTaxes) {
+          taxBreakdown.cgst = dbCgst;
+          taxBreakdown.sgst = dbSgst;
+        }
+      }
+    }
+  }
+
+  const rawExactGrandTotal = Math.max(0, taxableValueSum + taxSum);
+  const grandTotal: number = isViewOnly && loadedSaleRecord ? loadedSaleRecord.net_amount : Math.round(rawExactGrandTotal);
+  const roundOff: number = isViewOnly && loadedSaleRecord
+    ? (loadedSaleRecord.round_off !== undefined && loadedSaleRecord.round_off !== null ? loadedSaleRecord.round_off : 0)
+    : Number((grandTotal - rawExactGrandTotal).toFixed(2));
   const subtotal = isViewOnly && loadedSaleRecord ? (loadedSaleRecord.total_amount || originalPriceBasis) : originalPriceBasis;
   const tax = isViewOnly && loadedSaleRecord ? (loadedSaleRecord.tax_amount ?? taxSum) : taxSum;
   const discountAmount = isViewOnly && loadedSaleRecord ? (loadedSaleRecord.discount || 0) : displayDiscountAmount;
+  const returnedAmountSum = isViewOnly && loadedSaleRecord && loadedSaleRecord.items
+    ? Number(loadedSaleRecord.items.reduce((sum: number, it: any) => {
+        const effPrice = (it.net_amount && it.quantity > 0) ? (it.net_amount / it.quantity) : Number(it.unit_price || 0);
+        return sum + (Number(it.returned_quantity || 0) * effPrice);
+      }, 0).toFixed(2))
+    : 0;
+
+  const originalNetBasis = Math.max(0, subtotal - totalItemDiscounts - discountAmount);
+  const returnedGoodsDeduction = isViewOnly && loadedSaleRecord
+    ? (loadedSaleRecord.status === 'Returned' 
+        ? (effectiveSalesTaxMethod === 'exclusive' ? Number(((loadedSaleRecord.taxable_amount || subtotal) + (loadedSaleRecord.tax_amount || 0) - discountAmount).toFixed(2)) : originalNetBasis)
+        : (returnedAmountSum > 0 ? returnedAmountSum : Math.max(0, originalNetBasis - grandTotal)))
+    : 0;
   const effectivePaidAmount = paidAmount === '' ? (isViewOnly && loadedSaleRecord ? (loadedSaleRecord.paid_amount || 0) : 0) : Number(paidAmount);
   const pendingBalance = Math.max(0, grandTotal - effectivePaidAmount);
   const isCreditPending = effectivePaidAmount < grandTotal && grandTotal > 0;
+
+  // Auto-clamp paidAmount to grandTotal if cart items change or discounts are applied
+  useEffect(() => {
+    if (!isViewOnly && typeof paidAmount === 'number' && grandTotal > 0 && paidAmount > grandTotal) {
+      setPaidAmount(Number(grandTotal.toFixed(2)));
+    }
+  }, [grandTotal, isViewOnly, paidAmount]);
 
   // Filtered quotations for modal
   const pendingQuotationsCount = quotationsList.filter(q => q.status === 'Pending').length;
@@ -1317,26 +1544,26 @@ export default function POS() {
             </div>
 
             {/* Live Bill/Quote Number and Date */}
-            <div className="flex items-center gap-2 text-xs">
-              <span className="font-bold text-ink bg-surface-soft px-2.5 py-1 rounded-md border border-hairline">
+            <div className="flex items-center gap-2.5">
+              <span className="h-9 font-bold text-sm text-ink bg-surface-soft px-3.5 rounded-lg border border-hairline shadow-2xs flex items-center justify-center tracking-tight">
                 {posMode === 'billing' 
                   ? (activeSaleId ? (editingInvoiceNumber ? `Bill: ${editingInvoiceNumber}` : `Bill #${activeSaleId}`) : `Bill: ${nextInvoiceNo || '...'}`)
                   : (editingQuotationNumber ? `Quote: ${editingQuotationNumber}` : `Quote: ${nextQuotationNo || '...'}`)}
               </span>
-              <div className="flex items-center gap-1.5 bg-surface-soft px-2 py-0.5 rounded-md border border-hairline" title="Bill Date (Click to change date)">
-                <Calendar className="w-3.5 h-3.5 text-muted shrink-0" />
+              <div className="h-9 flex items-center gap-2 bg-surface-soft px-3 rounded-lg border border-hairline shadow-2xs" title="Bill Date (Click to change date)">
+                <Calendar className="w-4 h-4 text-primary shrink-0" />
                 <input
                   type="date"
                   value={billDate}
                   disabled={isViewOnly}
                   onChange={(e) => setBillDate(e.target.value)}
-                  className={`bg-transparent text-xs font-semibold text-ink focus:outline-none ${isViewOnly ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
+                  className={`bg-transparent text-sm font-semibold text-ink focus:outline-none ${isViewOnly ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
                 />
                 {!isViewOnly && billDate !== getLocalDate() && (
                   <button
                     type="button"
                     onClick={() => setBillDate(getLocalDate())}
-                    className="text-[10px] text-primary hover:underline font-bold ml-0.5"
+                    className="text-[11px] text-primary hover:underline font-bold px-1.5 py-0.5 rounded bg-primary/10 ml-0.5"
                     title="Reset to today"
                   >
                     Today
@@ -1347,14 +1574,34 @@ export default function POS() {
 
             {/* Viewing Bill Notice Pill (Read-Only) */}
             {isViewOnly && (
-              <div className="flex items-center gap-1.5 text-xs bg-primary/10 text-primary border border-primary/25 px-2.5 py-1 rounded-md font-semibold">
-                <Eye className="w-3.5 h-3.5 shrink-0" />
+              <div className={`h-9 flex items-center gap-1.5 text-xs ${
+                loadedSaleRecord?.status === 'Returned'
+                  ? 'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/30'
+                  : loadedSaleRecord?.status === 'Partially Returned'
+                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30'
+                  : 'bg-primary/10 text-primary border border-primary/25'
+              } px-3 rounded-lg font-semibold shadow-2xs`}>
+                <Eye className="w-4 h-4 shrink-0" />
                 <span>Viewing {editingInvoiceNumber ? `Bill: ${editingInvoiceNumber}` : `Bill #${activeSaleId}`}</span>
-                <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.2 rounded font-medium">Read-Only</span>
+                {loadedSaleRecord?.status === 'Returned' ? (
+                  <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-2xs">
+                    RETURNED / CANCELLED
+                  </span>
+                ) : loadedSaleRecord?.status === 'Partially Returned' ? (
+                  <span className="text-[10px] bg-amber-600 text-white px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-2xs">
+                    PARTIALLY RETURNED
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded font-medium">Read-Only</span>
+                )}
                 <button
                   type="button"
                   onClick={handleCancelEditBill}
-                  className="ml-2 px-2 py-0.5 text-xs font-semibold bg-canvas text-primary hover:bg-primary hover:text-on-primary rounded border border-primary/30 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  className={`ml-2 px-2 py-0.5 text-xs font-semibold bg-canvas ${
+                    loadedSaleRecord?.status === 'Returned'
+                      ? 'text-red-700 hover:bg-red-600 hover:text-white border-red-500/30'
+                      : 'text-primary hover:bg-primary hover:text-on-primary border-primary/30'
+                  } rounded border flex items-center gap-1 cursor-pointer transition-colors shadow-2xs`}
                   title={location.state?.from === 'contacts' ? "Close view and return to Customer Profile (Esc)" : "Close view and return to Day Book (Esc)"}
                 >
                   <span>Close</span>
@@ -1365,8 +1612,8 @@ export default function POS() {
 
             {/* Editing Bill Notice Pill */}
             {editSaleId && (
-              <div className="flex items-center gap-1.5 text-xs bg-primary/10 text-primary border border-primary/25 px-2.5 py-1 rounded-md font-semibold">
-                <Edit className="w-3.5 h-3.5 shrink-0" />
+              <div className="h-9 flex items-center gap-1.5 text-xs bg-primary/10 text-primary border border-primary/25 px-3 rounded-lg font-semibold shadow-2xs">
+                <Edit className="w-4 h-4 shrink-0" />
                 <span>Editing {editingInvoiceNumber ? `Bill: ${editingInvoiceNumber}` : `Bill #${editSaleId}`}</span>
                 <button
                   type="button"
@@ -1504,21 +1751,11 @@ export default function POS() {
                           <span className="text-xs text-muted">Default</span>
                         </li>
 
-                        {/* Direct Customer Creation Option */}
-                        <li
-                          onClick={() => {
-                            setIsCustomerDropdownOpen(false);
-                            openQuickCustomerModal(customerSearch.trim());
-                          }}
-                          className="p-3 bg-primary/5 hover:bg-primary/10 text-primary cursor-pointer text-sm font-semibold flex items-center gap-2 transition-colors border-b border-hairline"
-                        >
-                          <Plus className="w-4 h-4 shrink-0 text-primary" />
-                          <span>
-                            {customerSearch.trim()
-                              ? `+ Add "${customerSearch.trim()}" as New Customer`
-                              : '+ Add New Customer'}
-                          </span>
-                        </li>
+                        {filteredCustomers.length === 0 && customerSearch.trim() !== '' && (
+                          <li className="p-3 text-center text-xs text-muted">
+                            No customers found
+                          </li>
+                        )}
 
                         {filteredCustomers.map(c => (
                           <li 
@@ -1592,13 +1829,23 @@ export default function POS() {
                 cart.map((item) => {
                   const cartKey = getItemCartKey(item);
                   const isWarehouse = item.item_source_type === 'warehouse';
+                  const itemGross = (item.selling_price || 0) * (item.cart_qty || 0);
+                  const itemDiscAmt = item.discount_type === 'amount'
+                    ? Math.min(itemGross, Math.max(0, item.discount || 0))
+                    : (itemGross * Math.min(100, Math.max(0, item.discount || 0))) / 100;
+                  const itemNet = Math.max(0, itemGross - itemDiscAmt);
 
                   return (
                     <div key={cartKey} className="bg-canvas border-b border-hairline py-3 px-5 group flex items-center justify-between gap-3 hover:bg-surface-soft/40 transition-colors">
                       <div className="flex-1 min-w-0 pr-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="text-sm font-medium text-ink truncate leading-tight">{item.name}</h3>
                           {item.model && <span className="text-xs text-muted truncate">({item.model})</span>}
+                          {(loadedSaleRecord?.status === 'Returned' || Number((item as any).returned_quantity || 0) > 0) && (
+                            <span className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 px-1.5 py-0.2 rounded font-semibold border border-red-200 dark:border-red-800">
+                              {loadedSaleRecord?.status === 'Returned' ? 'Returned' : `Returned: ${(item as any).returned_quantity} pcs`}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-muted mt-1.5 flex items-center gap-2 flex-wrap">
                           <div className="flex items-center">
@@ -1613,7 +1860,6 @@ export default function POS() {
                             />
                             <span className="ml-1 text-muted">/ {item.unit || 'pc'}</span>
                           </div>
-                          {effectiveEnableSalesGST && <span className="text-primary text-[10px]">({item.cgst_percentage || 0}% CGST, {item.sgst_percentage || 0}% SGST)</span>}
 
                           {/* Item Stock Source Selector (Shop or Warehouse) */}
                           {isViewOnly ? (
@@ -1695,9 +1941,40 @@ export default function POS() {
                             />
                           </div>
                         )}
-                        <div className="w-[70px] text-right">
-                          <span className="font-bold text-ink text-sm tabular-nums">₹{(item.selling_price * item.cart_qty).toFixed(2)}</span>
+
+                        {/* Product-wise Discount Input / Badge (% only) */}
+                        {isViewOnly ? (
+                          itemDiscAmt > 0 ? (
+                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25">
+                              Disc: {item.discount_percent !== undefined ? item.discount_percent : item.discount}%
+                            </span>
+                          ) : null
+                        ) : (
+                          <div className="flex items-center gap-1 bg-surface-soft border border-hairline rounded-md px-2 py-1">
+                            <span className="text-[11px] text-muted font-medium select-none">Disc:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={item.discount === 0 || !item.discount ? '' : item.discount}
+                              onChange={(e) => updateItemDiscount(cartKey, Number(e.target.value) || 0)}
+                              placeholder="0"
+                              className="w-10 text-right bg-transparent text-xs font-semibold text-ink focus:outline-none tabular-nums"
+                              title="Product Discount (%)"
+                            />
+                            <span className="text-xs font-bold text-muted select-none">%</span>
+                          </div>
+                        )}
+
+                        <div className="w-[85px] text-right flex flex-col justify-center">
+                          <span className="font-bold text-ink text-sm tabular-nums">₹{itemNet.toFixed(2)}</span>
+                          {itemDiscAmt > 0 && (
+                            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">
+                              -₹{itemDiscAmt.toFixed(2)}
+                            </span>
+                          )}
                         </div>
+
                         {!isViewOnly && (
                           <button 
                             onClick={() => removeFromCart(cartKey)}
@@ -1716,7 +1993,7 @@ export default function POS() {
           </div>
 
           {/* Column 2: Middle Column (Summary & Checkout) */}
-          <div className="w-[350px] bg-surface-soft flex flex-col z-10 relative border-r border-hairline shrink-0 overflow-hidden">
+          <div className="w-[300px] xl:w-[350px] bg-surface-soft flex flex-col z-10 relative border-r border-hairline shrink-0 overflow-hidden">
             <div className="flex-1 overflow-y-auto p-5">
               
               <div className="flex items-center justify-between mb-5">
@@ -1747,47 +2024,53 @@ export default function POS() {
                   </div>
                 )}
                 
+                {totalItemDiscounts > 0 && (
+                  <div className="flex justify-between text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+                    <span>Product Discounts</span>
+                    <span className="tabular-nums">-₹{totalItemDiscounts.toFixed(2)}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between items-center text-sm text-body py-0.5">
-                  <span>Discount</span>
-                  <div className="flex items-center gap-1.5">
-                    <button 
-                      type="button"
-                      disabled={isViewOnly}
-                      onClick={() => setDiscountType(prev => prev === 'amount' ? 'percentage' : 'amount')}
-                      className={`text-xs font-semibold bg-canvas border border-hairline text-ink hover:bg-surface-strong px-2 py-0.5 rounded transition-colors select-none ${isViewOnly ? 'cursor-not-allowed opacity-60' : ''}`}
-                      title="Toggle discount type"
-                    >
-                      {discountType === 'amount' ? '₹' : '%'}
-                    </button>
+                  <span>Bill Discount</span>
+                  <div className="flex items-center border-b border-hairline focus-within:border-primary transition-colors">
                     <input 
                       type="number" 
                       min="0"
+                      max="100"
                       disabled={isViewOnly}
-                      max={discountType === 'percentage' ? 100 : undefined}
                       value={discount === 0 ? '' : discount}
                       onChange={(e) => {
                         if (isViewOnly) return;
                         let val = Number(e.target.value) || 0;
                         if (val < 0) val = 0;
-                        if (discountType === 'percentage' && val > 100) val = 100;
+                        if (val > 100) val = 100;
                         setDiscount(val);
                       }}
                       placeholder="0"
-                      className={`w-16 text-right border-b border-hairline bg-transparent py-0.5 focus:outline-none focus:border-primary font-semibold text-ink transition-colors tabular-nums ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
+                      className={`w-16 text-right bg-transparent py-0.5 focus:outline-none font-semibold text-ink transition-colors tabular-nums ${isViewOnly ? 'cursor-not-allowed opacity-80' : ''}`}
                     />
+                    <span className="text-muted text-xs ml-0.5 font-bold select-none">%</span>
                   </div>
                 </div>
-                
-                {discountAmount > 0 && (
-                  <div className="flex justify-between text-sm text-success font-medium">
-                    <span>Discount Amount</span>
-                    <span className="tabular-nums">-₹{discountAmount.toFixed(2)}</span>
+
+                {displayDiscountAmount > 0 && (
+                  <div className="flex justify-between text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+                    <span>Bill Discount Amount</span>
+                    <span className="tabular-nums">-₹{displayDiscountAmount.toFixed(2)}</span>
+                  </div>
+                )}
+
+                {isViewOnly && loadedSaleRecord && returnedGoodsDeduction > 0 && (
+                  <div className="flex justify-between text-sm text-red-600 dark:text-red-400 font-medium">
+                    <span>Returned Goods Deduction</span>
+                    <span className="tabular-nums">-₹{returnedGoodsDeduction.toFixed(2)}</span>
                   </div>
                 )}
                 
                 <div className="flex justify-between text-sm text-body mt-2 pt-2 border-t border-hairline">
                   <span className="font-medium">Taxable Value</span>
-                  <span className="font-medium text-ink tabular-nums">₹{(isViewOnly && loadedSaleRecord ? (effectiveSalesTaxMethod === 'inclusive' ? loadedSaleRecord.net_amount - loadedSaleRecord.tax_amount : loadedSaleRecord.total_amount) : taxableValueSum).toFixed(2)}</span>
+                  <span className="font-medium text-ink tabular-nums">₹{taxableValueSum.toFixed(2)}</span>
                 </div>
 
                 {effectiveEnableSalesGST && (
@@ -1810,7 +2093,7 @@ export default function POS() {
                 {roundOff !== 0 && (
                   <div className="flex justify-between items-center text-xs text-body">
                     <span>Round off</span>
-                    <span className="font-medium text-ink tabular-nums">{roundOff > 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
+                    <span className="font-medium text-ink tabular-nums">{roundOff >= 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}</span>
                   </div>
                 )}
                 
@@ -1818,6 +2101,30 @@ export default function POS() {
                   <span className="text-ink font-semibold">Grand Total</span>
                   <span className="text-2xl font-display font-bold text-ink tracking-tight leading-none tabular-nums">₹{grandTotal.toFixed(2)}</span>
                 </div>
+
+                {loadedSaleRecord?.status === 'Returned' && (
+                  <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-700 dark:text-red-400 space-y-1 mt-3">
+                    <div className="flex justify-between items-center font-bold">
+                      <span>Status</span>
+                      <span className="uppercase">Full Return Recorded</span>
+                    </div>
+                    <div className="text-[11px] text-muted">
+                      This invoice has been returned. Stock has been credited back and net payable is ₹0.00.
+                    </div>
+                  </div>
+                )}
+
+                {loadedSaleRecord?.status === 'Partially Returned' && (
+                  <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-400 space-y-1 mt-3">
+                    <div className="flex justify-between items-center font-bold">
+                      <span>Status</span>
+                      <span className="uppercase">Partially Returned</span>
+                    </div>
+                    <div className="text-[11px] text-muted">
+                      A portion of goods on this bill was returned. Net amount and taxes reflect remaining active items.
+                    </div>
+                  </div>
+                )}
                 
                 {posMode === 'billing' ? (
                   <>
@@ -1841,8 +2148,8 @@ export default function POS() {
                           ref={paidInputRef}
                           type="number" 
                           min="0"
+                          max={grandTotal > 0 ? grandTotal : undefined}
                           disabled={isViewOnly}
-                          max={grandTotal}
                           value={paidAmount === '' ? '' : paidAmount}
                           onFocus={(e) => {
                             if (paidAmount === 0) {
@@ -1863,8 +2170,10 @@ export default function POS() {
                               return;
                             }
                             let val = Number(raw);
-                            if (isNaN(val)) return;
-                            if (val > grandTotal) val = Number(grandTotal.toFixed(2));
+                            if (isNaN(val) || val < 0) return;
+                            if (grandTotal > 0 && val > grandTotal) {
+                              val = Number(grandTotal.toFixed(2));
+                            }
                             setPaidAmount(val);
                           }}
                           placeholder="0"
@@ -1873,8 +2182,8 @@ export default function POS() {
                       </div>
                     </div>
 
-                    {/* Payment Mode Selector */}
-                    {effectivePaidAmount > 0 && (
+                    {/* Payment Mode Selector: Always visible when cart has items or paid amount entered */}
+                    {(effectivePaidAmount > 0 || cart.length > 0) && (
                       <div className="pt-2 pb-1 border-t border-hairline/60 mt-1.5 space-y-2">
                         <div className="flex items-center justify-between text-xs text-muted font-medium">
                           <span>Payment Mode:</span>
@@ -1900,6 +2209,22 @@ export default function POS() {
                           ))}
                         </div>
 
+                        {/* UPI / Card Ref No Sub-Box */}
+                        {(paymentMethod === 'UPI' || paymentMethod === 'Card') && (
+                          <div className="p-2 bg-surface-soft border border-hairline rounded-md text-xs space-y-1 animate-in fade-in duration-150">
+                            <label className="text-[10px] text-muted block uppercase font-medium">
+                              {paymentMethod === 'UPI' ? 'UPI Ref / UTR No (Optional)' : 'Card Auth / Ref No (Optional)'}
+                            </label>
+                            <input
+                              type="text"
+                              placeholder={paymentMethod === 'UPI' ? 'e.g. 329482910482' : 'e.g. Auth # 4921'}
+                              value={posChequeNo}
+                              onChange={e => setPosChequeNo(e.target.value)}
+                              className="w-full px-2 py-1 bg-canvas border border-hairline rounded text-xs text-ink focus:outline-none focus:border-primary"
+                            />
+                          </div>
+                        )}
+
                         {/* Cheque Details Sub-Box */}
                         {paymentMethod === 'Cheque' && (
                           <div className="p-2.5 bg-surface-soft border border-hairline rounded-md text-xs space-y-2 animate-in fade-in duration-150">
@@ -1913,6 +2238,7 @@ export default function POS() {
                                 <label className="text-[10px] text-muted block mb-0.5 uppercase">Cheque No *</label>
                                 <input
                                   type="text"
+                                  autoFocus
                                   placeholder="004128"
                                   value={posChequeNo}
                                   onChange={e => setPosChequeNo(e.target.value)}
@@ -2097,7 +2423,12 @@ export default function POS() {
                                 parent_id: null,
                                 is_group: false,
                                 barcode: '',
-                                cart_key: `${i.product_id}_shop_0`
+                                cart_key: `${i.product_id}_shop_0`,
+                                discount: i.discount || 0,
+                                discount_type: i.discount_type || 'percentage',
+                                discount_percent: i.discount_percent || 0,
+                                taxable_amount: i.taxable_amount,
+                                net_amount: i.net_amount
                               })),
                               subtotal: s.total_amount ?? subtotal,
                               taxAmount: s.tax_amount ?? tax,
@@ -2106,9 +2437,13 @@ export default function POS() {
                               discount: s.discount ?? discountAmount,
                               netAmount: s.net_amount ?? grandTotal,
                               paidAmount: s.paid_amount ?? effectivePaidAmount,
+                              roundOff: s.round_off ?? roundOff,
+                              taxableAmount: s.taxable_amount ?? taxableValueSum,
+                              itemDiscountAmount: s.item_discount_amount ?? totalItemDiscounts,
                               paymentMethod: s.payment_method || 'Cash',
                               sourceLocationName: s.source_type === 'warehouse' ? (whObj ? whObj.name : 'Warehouse') : 'Main Shop',
-                              dispatchDetails: s.dispatchDetails || (s.dispatch_details ? (typeof s.dispatch_details === 'string' ? JSON.parse(s.dispatch_details) : s.dispatch_details) : undefined)
+                              dispatchDetails: s.dispatchDetails || (s.dispatch_details ? (typeof s.dispatch_details === 'string' ? JSON.parse(s.dispatch_details) : s.dispatch_details) : undefined),
+                              status: s.status
                             };
                             setPrintData(receiptPayload);
                             setTimeout(() => window.print(), 100);
@@ -2200,6 +2535,10 @@ export default function POS() {
                     type="button"
                     onClick={() => {
                       setCart([]);
+                      setDiscount(0);
+                      setCustomerId('');
+                      setPaidAmount('');
+                      setQuotationNotes('');
                       setConvertingQuotationId(null);
                       setConvertingQuotationNumber(null);
                       setEditingQuotationId(null);
@@ -2231,7 +2570,7 @@ export default function POS() {
           </div>
 
           {/* Column 3: Products Catalog & Search */}
-          <div className="w-[350px] flex flex-col p-5 overflow-hidden bg-surface-soft border-l border-hairline shrink-0">
+          <div className="w-[300px] xl:w-[350px] flex flex-col p-5 overflow-hidden bg-surface-soft border-l border-hairline shrink-0">
             <header className="mb-3 shrink-0">
               <h2 className="text-lg font-display font-medium text-ink tracking-tight">Products</h2>
               <p className="text-xs text-muted mt-0.5">

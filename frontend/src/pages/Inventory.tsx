@@ -174,12 +174,22 @@ export default function Inventory() {
     try {
       const data = await getProducts();
       setProducts(data);
+    } catch (error) {
+      console.error("Failed to load products from database", error);
+    }
+
+    try {
       const groups = await getItemGroups();
       setItemGroups(groups);
+    } catch (error) {
+      console.error("Failed to load groups from database", error);
+    }
+
+    try {
       const b = await getBrands();
       setBrands(b);
     } catch (error) {
-      console.error("Failed to load products from database", error);
+      console.error("Failed to load brands from database", error);
     }
   }
 
@@ -417,10 +427,18 @@ export default function Inventory() {
   async function handleAddGroup(e: React.FormEvent) {
     e.preventDefault();
     try {
-      if (newGroupName.trim()) {
-        await addGroup(newGroupName.trim());
+      const nameToAdd = newGroupName.trim();
+      if (nameToAdd) {
+        await addGroup(nameToAdd);
         setNewGroupName('');
-        loadProducts();
+        setAddMasterModal(null);
+        await loadProducts();
+        const updatedGroups = await getItemGroups();
+        setItemGroups(updatedGroups);
+        const created = updatedGroups.find(g => g.name.toLowerCase() === nameToAdd.toLowerCase());
+        if (created) {
+          setGroupId(created.id);
+        }
       }
     } catch (error) {
       console.error(error);
@@ -431,10 +449,18 @@ export default function Inventory() {
   async function handleAddBrand(e: React.FormEvent) {
     e.preventDefault();
     try {
-      if (newBrandName.trim()) {
-        await addBrand(newBrandName.trim());
+      const nameToAdd = newBrandName.trim();
+      if (nameToAdd) {
+        await addBrand(nameToAdd);
         setNewBrandName('');
-        loadProducts();
+        setAddMasterModal(null);
+        await loadProducts();
+        const updatedBrands = await getBrands();
+        setBrands(updatedBrands);
+        const created = updatedBrands.find(b => b.name.toLowerCase() === nameToAdd.toLowerCase());
+        if (created) {
+          setBrandId(created.id);
+        }
       }
     } catch (error) {
       console.error(error);
@@ -610,8 +636,11 @@ export default function Inventory() {
 
   // Filter products for main shop floor
   const lowStockThreshold = parseInt(localStorage.getItem('lowStockThreshold') || '10', 10);
+  const getProductMinStockThreshold = (p: Product) => (p.min_stock > 0 ? p.min_stock : lowStockThreshold);
+  const isProductLowStock = (p: Product) => p.stock_quantity <= getProductMinStockThreshold(p);
+
   const filteredProducts = products.filter(p => {
-    if (filterLowStock && p.stock_quantity >= lowStockThreshold) {
+    if (filterLowStock && !isProductLowStock(p)) {
       return false;
     }
     const q = search.toLowerCase();
@@ -832,14 +861,24 @@ export default function Inventory() {
             </div>
 
             <div className="flex items-center gap-3 flex-1 max-w-lg ml-4 justify-end">
-              {filterLowStock && (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold whitespace-nowrap shrink-0">
-                  Low Stock (&lt; {lowStockThreshold})
-                  <button onClick={() => setFilterLowStock(false)} className="hover:text-red-900" title="Show all products">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+              <button
+                type="button"
+                onClick={() => setFilterLowStock(prev => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors shrink-0 cursor-pointer ${
+                  filterLowStock
+                    ? 'bg-signature-coral/15 text-signature-coral border-signature-coral/30 ring-1 ring-signature-coral/20'
+                    : 'bg-surface hover:bg-surface-soft text-muted hover:text-ink border-hairline'
+                }`}
+                title="Toggle Low Stock Filter"
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-signature-coral" />
+                <span>Low Stock</span>
+                <span className={`ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  filterLowStock ? 'bg-signature-coral text-white' : 'bg-surface-soft text-muted border border-hairline'
+                }`}>
+                  {products.filter(isProductLowStock).length}
                 </span>
-              )}
+              </button>
               <div className="relative w-full max-w-md">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted w-4 h-4" />
                 <input 
@@ -1109,9 +1148,9 @@ export default function Inventory() {
                                   {item.quantity}
                                 </span>
                               </td>
-                              <td className="px-6 py-4 text-right text-sm text-muted">₹{item.purchase_price.toFixed(2)}</td>
+                              <td className="px-6 py-4 text-right text-sm text-muted">₹{(item.purchase_price || 0).toFixed(2)}</td>
                               <td className="px-6 py-4 text-right font-semibold text-emerald-600 text-sm">
-                                ₹{(item.quantity * item.purchase_price).toFixed(2)}
+                                ₹{((item.quantity || 0) * (item.purchase_price || 0)).toFixed(2)}
                               </td>
                               <td className="px-6 py-4 text-right">
                                 <div className="flex justify-end gap-2">
@@ -1491,7 +1530,7 @@ export default function Inventory() {
                   </thead>
                   <tbody className="divide-y divide-hairline">
                     {filteredProducts.map((p) => {
-                      const isLowStock = p.stock_quantity <= p.min_stock;
+                      const isLowStock = isProductLowStock(p);
                       return (
                         <tr key={p.id} className="hover:bg-surface-soft transition-colors border-b border-hairline last:border-0 group">
                           <td className="px-6 py-4 font-medium text-ink">
@@ -1567,7 +1606,7 @@ export default function Inventory() {
               {viewMode === 'groups' && (
                 <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-canvas min-h-[500px]">
                   {itemGroups.filter(g => g.name.toLowerCase().includes(search.toLowerCase())).map(group => {
-                    const groupProducts = products.filter(p => p.group_id === group.id);
+                    const groupProducts = (filterLowStock ? filteredProducts : products).filter(p => p.group_id === group.id);
                     const isExpanded = expandedMasterGroups[`g_${group.id}`];
                     const brandsInGroup = Array.from(new Set(groupProducts.map(p => p.brand_name || 'UNBRANDED')));
                     const totalStock = groupProducts.reduce((sum, p) => sum + (p.stock_quantity || 0), 0);
@@ -1705,7 +1744,7 @@ export default function Inventory() {
               {viewMode === 'brands' && (
                 <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-canvas min-h-[500px]">
                   {brands.filter(b => b.name.toLowerCase().includes(search.toLowerCase())).map(brand => {
-                    const brandProducts = products.filter(p => p.brand_id === brand.id);
+                    const brandProducts = (filterLowStock ? filteredProducts : products).filter(p => p.brand_id === brand.id);
                     const isExpanded = expandedMasterGroups[`b_${brand.id}`];
                     const groupsInBrand = Array.from(new Set(brandProducts.map(p => p.group_name || 'UNGROUPED')));
                     const totalStock = brandProducts.reduce((sum, p) => sum + (p.stock_quantity || 0), 0);
@@ -1896,9 +1935,21 @@ export default function Inventory() {
                 {/* Row 2: Group, Brand, HSN Code, Unit (4 Balanced Columns) */}
                 <div className="grid grid-cols-4 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
-                      Group <span className="text-signature-coral">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
+                        Group <span className="text-signature-coral">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => { setNewGroupName(''); setAddMasterModal('group'); }}
+                        className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-0.5 cursor-pointer"
+                        title="Add New Group"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add</span>
+                      </button>
+                    </div>
                     <select 
                       required 
                       value={groupId || ''} 
@@ -1910,9 +1961,21 @@ export default function Inventory() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-1.5">
-                      Brand
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
+                        Brand
+                      </label>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => { setNewBrandName(''); setAddMasterModal('brand'); }}
+                        className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-0.5 cursor-pointer"
+                        title="Add New Brand"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add</span>
+                      </button>
+                    </div>
                     <select 
                       value={brandId || ''} 
                       onChange={e => setBrandId(Number(e.target.value) || null)} 
@@ -2043,6 +2106,7 @@ export default function Inventory() {
                       <button
                         key={rate}
                         type="button"
+                        tabIndex={-1}
                         onClick={() => handleGstPreset(rate)}
                         className={`px-3 py-1.5 rounded text-xs font-semibold border transition-colors ${
                           gstPercentage === rate.toString()
@@ -2138,13 +2202,13 @@ export default function Inventory() {
 
       {/* 2. ADD ITEM GROUP MODAL */}
       {addMasterModal === 'group' && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-[60] flex items-center justify-center">
           <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-sm border border-hairline overflow-hidden">
             <div className="p-5 border-b border-hairline flex justify-between items-center bg-surface">
               <h2 className="text-xl font-display font-medium text-ink">Add Item Group</h2>
               <button onClick={() => setAddMasterModal(null)} className="text-muted hover:text-ink"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={(e) => { handleAddGroup(e); setAddMasterModal(null); }} onKeyDown={handleFormKeyDown} className="p-5">
+            <form onSubmit={handleAddGroup} onKeyDown={handleFormKeyDown} className="p-5">
               <label className="block text-sm font-bold text-ink mb-1.5 uppercase tracking-wider">Group Name</label>
               <input autoFocus required type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} className="w-full p-2.5 bg-surface border border-hairline rounded-md focus:border-ink focus:outline-none transition-colors mb-6" placeholder="e.g. FANS" />
               
@@ -2159,13 +2223,13 @@ export default function Inventory() {
 
       {/* 3. ADD BRAND MODAL */}
       {addMasterModal === 'brand' && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-[60] flex items-center justify-center">
           <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-sm border border-hairline overflow-hidden">
             <div className="p-5 border-b border-hairline flex justify-between items-center bg-surface">
               <h2 className="text-xl font-display font-medium text-ink">Add Brand</h2>
               <button onClick={() => setAddMasterModal(null)} className="text-muted hover:text-ink"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={(e) => { handleAddBrand(e); setAddMasterModal(null); }} onKeyDown={handleFormKeyDown} className="p-5">
+            <form onSubmit={handleAddBrand} onKeyDown={handleFormKeyDown} className="p-5">
               <label className="block text-sm font-bold text-ink mb-1.5 uppercase tracking-wider">Brand Name</label>
               <input autoFocus required type="text" value={newBrandName} onChange={e => setNewBrandName(e.target.value)} className="w-full p-2.5 bg-surface border border-hairline rounded-md focus:border-ink focus:outline-none transition-colors mb-6" placeholder="e.g. HAVELLS" />
               
@@ -2456,7 +2520,11 @@ export default function Inventory() {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    onClick={() => setTransferDirection('to_shop')}
+                    onClick={() => {
+                      setTransferDirection('to_shop');
+                      setTransferProductId('');
+                      setTransferQty('1');
+                    }}
                     className={`p-3 rounded-lg border text-sm font-semibold flex flex-col items-center justify-center gap-1 transition-all ${
                       transferDirection === 'to_shop' 
                         ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary' 
@@ -2469,7 +2537,11 @@ export default function Inventory() {
 
                   <button
                     type="button"
-                    onClick={() => setTransferDirection('from_shop')}
+                    onClick={() => {
+                      setTransferDirection('from_shop');
+                      setTransferProductId('');
+                      setTransferQty('1');
+                    }}
                     className={`p-3 rounded-lg border text-sm font-semibold flex flex-col items-center justify-center gap-1 transition-all ${
                       transferDirection === 'from_shop' 
                         ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary' 
@@ -2496,6 +2568,8 @@ export default function Inventory() {
                     onChange={e => {
                       const id = Number(e.target.value) || '';
                       setTransferWarehouseId(id);
+                      setTransferProductId('');
+                      setTransferQty('1');
                       if (id) loadTransferWhStock(Number(id));
                     }}
                     className="w-full px-3 py-2 bg-surface border border-hairline rounded text-sm text-ink focus:outline-none focus:border-ink font-medium"
@@ -2542,11 +2616,23 @@ export default function Inventory() {
               <div>
                 <div className="flex justify-between items-center mb-1.5">
                   <label className="text-xs font-bold text-ink uppercase tracking-wider">Quantity to Transfer *</label>
-                  {transferAvailableStock !== null && (
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${transferAvailableStock > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                      Available in Source: {transferAvailableStock}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {transferAvailableStock !== null && (
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${transferAvailableStock > 0 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'}`}>
+                        Available in Source: {transferAvailableStock}
+                      </span>
+                    )}
+                    {transferAvailableStock !== null && transferAvailableStock > 0 && (
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => setTransferQty(String(transferAvailableStock))}
+                        className="text-xs font-bold px-2 py-0.5 bg-primary/10 text-primary hover:bg-primary/20 rounded border border-primary/20 transition-colors"
+                      >
+                        Max
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <input
                   required
@@ -2554,7 +2640,20 @@ export default function Inventory() {
                   min="1"
                   max={transferAvailableStock !== null && transferAvailableStock > 0 ? transferAvailableStock : undefined}
                   value={transferQty}
-                  onChange={e => setTransferQty(e.target.value)}
+                  onChange={e => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setTransferQty('');
+                      return;
+                    }
+                    const num = parseInt(val, 10);
+                    if (isNaN(num)) return;
+                    if (transferAvailableStock !== null && num > transferAvailableStock) {
+                      setTransferQty(String(transferAvailableStock));
+                    } else {
+                      setTransferQty(val);
+                    }
+                  }}
                   className="w-full px-3 py-2 bg-surface border border-hairline rounded-md text-sm text-ink font-semibold focus:outline-none focus:border-ink"
                   placeholder="1"
                 />

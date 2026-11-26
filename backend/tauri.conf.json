@@ -27,7 +27,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "dmg", "app"],
+    "publisher": "Inventory Management Software",
+    "copyright": "© 2026 Inventory Management Software. All rights reserved.",
+    "shortDescription": "Inventory Management Software",
+    "longDescription": "Inventory Management Software - Enterprise Billing, Stock & Accounting System.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,6 +39,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh",
+        "installMode": "currentUser"
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "10.15"
     }

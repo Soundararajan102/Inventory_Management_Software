@@ -49,7 +49,7 @@ export default function Reports() {
   }
 
   // Quick Preset Handlers
-  function applyPreset(preset: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all') {
+  function applyPreset(preset: 'today' | 'yesterday' | 'week' | 'month' | 'this_week' | 'this_month' | 'year' | 'all') {
     const today = getDaysAgo(0);
     if (preset === 'today') {
       setStartDate(today);
@@ -64,6 +64,20 @@ export default function Reports() {
     } else if (preset === 'month') {
       setStartDate(getDaysAgo(30));
       setEndDate(today);
+    } else if (preset === 'this_week') {
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.setDate(diff));
+      const offset = monday.getTimezoneOffset() * 60000;
+      setStartDate(new Date(monday.getTime() - offset).toISOString().split('T')[0]);
+      setEndDate(today);
+    } else if (preset === 'this_month') {
+      const now = new Date();
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const offset = firstDay.getTimezoneOffset() * 60000;
+      setStartDate(new Date(firstDay.getTime() - offset).toISOString().split('T')[0]);
+      setEndDate(today);
     } else if (preset === 'year') {
       setStartDate(getDaysAgo(365));
       setEndDate(today);
@@ -76,6 +90,13 @@ export default function Reports() {
   useEffect(() => {
     loadPartyOptions();
   }, []);
+
+  const getPartySuffix = (bal: number, pType: 'customer' | 'supplier') => {
+    if (Math.abs(bal) < 0.005) return '';
+    return pType === 'customer'
+      ? (bal > 0 ? ' (Dr)' : ' (Cr)')
+      : (bal > 0 ? ' (Cr)' : ' (Dr)');
+  };
 
   async function loadPartyOptions() {
     try {
@@ -120,17 +141,25 @@ export default function Reports() {
     }
   }
 
+  const getLowStockThreshold = (item: InventoryValuationItem) => {
+    return (item.min_stock !== undefined && item.min_stock !== null && item.min_stock > 0)
+      ? item.min_stock
+      : (Number(localStorage.getItem('lowStockThreshold')) || 5);
+  };
+
   // Totals Calculations
-  const totalSalesAmount = sales.reduce((sum, s) => sum + s.net_amount, 0);
+  const totalSalesAmount = sales.reduce((sum, s) => sum + (s.net_amount || 0), 0);
   const totalSalesTax = sales.reduce((sum, s) => sum + (s.tax_amount || 0), 0);
+  const totalSalesTaxable = sales.reduce((sum, s) => sum + (s.taxable_amount ?? ((s.net_amount || 0) - (s.tax_amount || 0))), 0);
   const totalSalesQty = sales.reduce((sum, s) => sum + (s.total_quantity || 0), 0);
 
-  const totalPurchasesAmount = purchases.reduce((sum, p) => sum + p.net_amount, 0);
+  const totalPurchasesAmount = purchases.reduce((sum, p) => sum + (p.net_amount || 0), 0);
   const totalPurchasesTax = purchases.reduce((sum, p) => sum + (p.tax_amount || 0), 0);
+  const totalPurchasesTaxable = purchases.reduce((sum, p) => sum + (p.taxable_amount ?? ((p.net_amount || 0) - (p.tax_amount || 0))), 0);
   const totalPurchasesQty = purchases.reduce((sum, p) => sum + (p.total_quantity || 0), 0);
 
-  const totalExpensesAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalProductSalesAmount = productSales.reduce((sum, ps) => sum + ps.total_revenue, 0);
+  const totalExpensesAmount = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  const totalProductSalesAmount = productSales.reduce((sum, ps) => sum + (ps.total_revenue || 0), 0);
 
   // Filtered inventory calculations
   const filteredInventory = inventory.filter(item => {
@@ -144,7 +173,8 @@ export default function Reports() {
     if (!matchesSearch) return false;
 
     if (inventoryFilter === 'low_stock') {
-      return item.stock_quantity <= (item.min_stock ?? 5) && item.stock_quantity > 0;
+      const threshold = getLowStockThreshold(item);
+      return item.stock_quantity <= threshold && item.stock_quantity > 0;
     }
     if (inventoryFilter === 'out_of_stock') {
       return item.stock_quantity <= 0;
@@ -155,7 +185,10 @@ export default function Reports() {
   const totalStockValuation = filteredInventory.reduce((sum, i) => sum + (i.stock_valuation || 0), 0);
   const totalRetailValuation = filteredInventory.reduce((sum, i) => sum + (i.retail_valuation || 0), 0);
   const totalStockUnits = filteredInventory.reduce((sum, i) => sum + (i.stock_quantity || 0), 0);
-  const lowStockCount = inventory.filter(i => i.stock_quantity <= (i.min_stock ?? 5) && i.stock_quantity > 0).length;
+  const lowStockCount = inventory.filter(i => {
+    const threshold = getLowStockThreshold(i);
+    return i.stock_quantity <= threshold && i.stock_quantity > 0;
+  }).length;
   const outOfStockCount = inventory.filter(i => i.stock_quantity <= 0).length;
 
   // Trigger PDF Report Generation & Print Dialog
@@ -169,9 +202,9 @@ export default function Reports() {
         dateRange: formattedRange,
         summaryCards: [
           { label: 'Total Sales Revenue', value: `₹${totalSalesAmount.toFixed(2)}`, highlight: true },
+          { label: 'Total Taxable Value', value: `₹${totalSalesTaxable.toFixed(2)}` },
           { label: 'Total GST Tax Collected', value: `₹${totalSalesTax.toFixed(2)}` },
-          { label: 'Total Invoices', value: sales.length },
-          { label: 'Total Units Sold', value: totalSalesQty }
+          { label: 'Total Invoices / Qty', value: `${sales.length} Bills (${totalSalesQty} Units)` }
         ],
         columns: [
           { header: 'Date', accessor: 'formattedDate' },
@@ -179,7 +212,9 @@ export default function Reports() {
           { header: 'Customer', accessor: 'customer_name' },
           { header: 'Items / Qty', accessor: 'products_bought' },
           { header: 'Total Qty', accessor: 'total_quantity', align: 'center' },
+          { header: 'Taxable (₹)', accessor: 'formattedTaxable', align: 'right' },
           { header: 'Tax (₹)', accessor: 'formattedTax', align: 'right' },
+          { header: 'Mode', accessor: 'payment_method', align: 'center' },
           { header: 'Net Amount (₹)', accessor: 'formattedNet', align: 'right' }
         ],
         rows: sales.map(s => ({
@@ -187,8 +222,10 @@ export default function Reports() {
           formattedDate: s.date.split(' ')[0],
           invoice_number: s.invoice_number || `INV-${s.id}`,
           customer_name: s.customer_name || 'Walk-in Customer',
+          formattedTaxable: (s.taxable_amount ?? ((s.net_amount || 0) - (s.tax_amount || 0))).toFixed(2),
           formattedTax: (s.tax_amount || 0).toFixed(2),
-          formattedNet: `₹${s.net_amount.toFixed(2)}`
+          payment_method: s.payment_method || 'Cash',
+          formattedNet: `₹${(s.net_amount || 0).toFixed(2)}`
         })),
         totalRow: {
           formattedDate: '',
@@ -196,7 +233,9 @@ export default function Reports() {
           customer_name: '',
           products_bought: `${sales.length} Bills`,
           total_quantity: totalSalesQty,
+          formattedTaxable: `₹${totalSalesTaxable.toFixed(2)}`,
           formattedTax: `₹${totalSalesTax.toFixed(2)}`,
+          payment_method: '',
           formattedNet: `₹${totalSalesAmount.toFixed(2)}`
         }
       };
@@ -206,9 +245,9 @@ export default function Reports() {
         dateRange: formattedRange,
         summaryCards: [
           { label: 'Total Purchases Value', value: `₹${totalPurchasesAmount.toFixed(2)}`, highlight: true },
+          { label: 'Total Taxable Value', value: `₹${totalPurchasesTaxable.toFixed(2)}` },
           { label: 'Total GST Paid', value: `₹${totalPurchasesTax.toFixed(2)}` },
-          { label: 'Total Invoices', value: purchases.length },
-          { label: 'Total Units Purchased', value: totalPurchasesQty }
+          { label: 'Invoices / Units', value: `${purchases.length} Bills (${totalPurchasesQty} Units)` }
         ],
         columns: [
           { header: 'Date', accessor: 'formattedDate' },
@@ -217,14 +256,16 @@ export default function Reports() {
           { header: 'Items / Details', accessor: 'products_bought' },
           { header: 'Total Qty', accessor: 'total_quantity', align: 'center' },
           { header: 'Status', accessor: 'status', align: 'center' },
+          { header: 'Taxable (₹)', accessor: 'formattedTaxable', align: 'right' },
           { header: 'Tax (₹)', accessor: 'formattedTax', align: 'right' },
           { header: 'Net Amount (₹)', accessor: 'formattedNet', align: 'right' }
         ],
         rows: purchases.map(p => ({
           ...p,
           formattedDate: p.date.split(' ')[0],
+          formattedTaxable: (p.taxable_amount ?? ((p.net_amount || 0) - (p.tax_amount || 0))).toFixed(2),
           formattedTax: (p.tax_amount || 0).toFixed(2),
-          formattedNet: `₹${p.net_amount.toFixed(2)}`
+          formattedNet: `₹${(p.net_amount || 0).toFixed(2)}`
         })),
         totalRow: {
           formattedDate: '',
@@ -233,6 +274,7 @@ export default function Reports() {
           products_bought: `${purchases.length} Purchases`,
           total_quantity: totalPurchasesQty,
           status: '',
+          formattedTaxable: `₹${totalPurchasesTaxable.toFixed(2)}`,
           formattedTax: `₹${totalPurchasesTax.toFixed(2)}`,
           formattedNet: `₹${totalPurchasesAmount.toFixed(2)}`
         }
@@ -347,13 +389,19 @@ export default function Reports() {
         summaryCards: [
           { 
             label: 'Opening Balance', 
-            value: `₹${Math.abs(partyLedgerResult.openingBalance).toFixed(2)} ${partyLedgerResult.openingBalance >= 0 ? '(Dr)' : '(Cr)'}` 
+            value: `₹${Math.abs(partyLedgerResult.openingBalance).toFixed(2)} ${getPartySuffix(partyLedgerResult.openingBalance, partyType)}` 
           },
-          { label: 'Total Debited (+)', value: `₹${partyLedgerResult.totalDebit.toFixed(2)}` },
-          { label: 'Total Credited (-)', value: `₹${partyLedgerResult.totalCredit.toFixed(2)}` },
+          { 
+            label: partyType === 'customer' ? 'Total Debited / Billed (+)' : 'Total Credited / Purchases (+)', 
+            value: `₹${(partyType === 'customer' ? partyLedgerResult.totalDebit : partyLedgerResult.totalCredit).toFixed(2)}` 
+          },
+          { 
+            label: partyType === 'customer' ? 'Total Credited / Paid (-)' : 'Total Debited / Paid (-)', 
+            value: `₹${(partyType === 'customer' ? partyLedgerResult.totalCredit : partyLedgerResult.totalDebit).toFixed(2)}` 
+          },
           { 
             label: 'Closing Balance', 
-            value: `₹${Math.abs(partyLedgerResult.closingBalance).toFixed(2)} ${partyLedgerResult.closingBalance >= 0 ? '(Dr)' : '(Cr)'}`, 
+            value: `₹${Math.abs(partyLedgerResult.closingBalance).toFixed(2)} ${getPartySuffix(partyLedgerResult.closingBalance, partyType)}`, 
             highlight: true 
           }
         ],
@@ -370,7 +418,7 @@ export default function Reports() {
           formattedDate: e.date.split(' ')[0],
           formattedDebit: e.debit > 0 ? `₹${e.debit.toFixed(2)}` : '-',
           formattedCredit: e.credit > 0 ? `₹${e.credit.toFixed(2)}` : '-',
-          formattedBalance: `₹${Math.abs(e.balance).toFixed(2)} ${e.balance >= 0 ? '(Dr)' : '(Cr)'}`
+          formattedBalance: `₹${Math.abs(e.balance).toFixed(2)} ${getPartySuffix(e.balance, partyType)}`
         })),
         totalRow: {
           formattedDate: '',
@@ -378,7 +426,7 @@ export default function Reports() {
           description: 'Total Transactions',
           formattedDebit: `₹${partyLedgerResult.totalDebit.toFixed(2)}`,
           formattedCredit: `₹${partyLedgerResult.totalCredit.toFixed(2)}`,
-          formattedBalance: `₹${Math.abs(partyLedgerResult.closingBalance).toFixed(2)} ${partyLedgerResult.closingBalance >= 0 ? '(Dr)' : '(Cr)'}`
+          formattedBalance: `₹${Math.abs(partyLedgerResult.closingBalance).toFixed(2)} ${getPartySuffix(partyLedgerResult.closingBalance, partyType)}`
         }
       };
     }
@@ -395,14 +443,16 @@ export default function Reports() {
   const exportCSV = async () => {
     let csv = '';
     if (activeTab === 'sales') {
-      csv = 'Date,Bill No,Customer,Products Bought,Total Qty,Amount,Tax,Net Amount\n';
+      csv = 'Date,Bill No,Customer,Products Bought,Total Qty,Taxable Amount,Tax,Payment Mode,Net Amount\n';
       sales.forEach(s => {
-        csv += `${s.date.split(' ')[0]},"${s.invoice_number || s.id}","${s.customer_name || 'Walk-in Customer'}","${(s.products_bought || '').replace(/"/g, '""')}",${s.total_quantity || 0},${(s.net_amount - s.tax_amount).toFixed(2)},${s.tax_amount},${s.net_amount}\n`;
+        const taxable = (s.taxable_amount != null ? s.taxable_amount : ((s.net_amount || 0) - (s.tax_amount || 0))).toFixed(2);
+        csv += `${s.date.split(' ')[0]},"${s.invoice_number || s.id}","${s.customer_name || 'Walk-in Customer'}","${(s.products_bought || '').replace(/"/g, '""')}",${s.total_quantity || 0},${taxable},${(s.tax_amount || 0).toFixed(2)},"${s.payment_method || 'Cash'}",${(s.net_amount || 0).toFixed(2)}\n`;
       });
     } else if (activeTab === 'purchases') {
-      csv = 'Date,Supplier,Supplier Invoice No,Invoice Date,Products Bought,Total Qty,Status,Amount,Tax,Net Amount\n';
+      csv = 'Date,Supplier,Supplier Invoice No,Invoice Date,Products Bought,Total Qty,Status,Taxable Amount,Tax,Payment Mode,Net Amount\n';
       purchases.forEach(p => {
-        csv += `${p.date.split(' ')[0]},"${p.supplier_name}","${p.invoice_number}","${p.supplier_invoice_date || ''}","${(p.products_bought || '').replace(/"/g, '""')}",${p.total_quantity || 0},${p.status},${(p.net_amount - p.tax_amount).toFixed(2)},${p.tax_amount},${p.net_amount}\n`;
+        const taxable = (p.taxable_amount != null ? p.taxable_amount : ((p.net_amount || 0) - (p.tax_amount || 0))).toFixed(2);
+        csv += `${p.date.split(' ')[0]},"${p.supplier_name}","${p.invoice_number}","${p.supplier_invoice_date || ''}","${(p.products_bought || '').replace(/"/g, '""')}",${p.total_quantity || 0},${p.status},${taxable},${(p.tax_amount || 0).toFixed(2)},"${p.payment_method || 'Cash'}",${(p.net_amount || 0).toFixed(2)}\n`;
       });
     } else if (activeTab === 'inventory') {
       if (filteredInventory.length === 0) {
@@ -411,28 +461,28 @@ export default function Reports() {
       }
       csv = 'Product ID,Item Name,Model,Category,Brand,Stock Quantity,Unit,Cost Price,Selling Price,Stock Valuation,Retail Valuation\n';
       filteredInventory.forEach(i => {
-        csv += `${i.id},"${i.name}","${i.model || ''}","${i.group_name || ''}","${i.brand_name || ''}",${i.stock_quantity},"${i.unit}",${i.purchase_price},${i.selling_price},${i.stock_valuation},${i.retail_valuation}\n`;
+        csv += `${i.id},"${i.name}","${i.model || ''}","${i.group_name || ''}","${i.brand_name || ''}",${i.stock_quantity},"${i.unit}",${(i.purchase_price || 0).toFixed(2)},${(i.selling_price || 0).toFixed(2)},${(i.stock_valuation || 0).toFixed(2)},${(i.retail_valuation || 0).toFixed(2)}\n`;
       });
     } else if (activeTab === 'products') {
       csv = 'Product ID,Product Name,Model,Units Sold,Net Revenue\n';
       productSales.forEach(ps => {
-        csv += `${ps.product_id},"${ps.product_name}","${ps.model || ''}",${ps.total_quantity},${ps.total_revenue.toFixed(2)}\n`;
+        csv += `${ps.product_id},"${ps.product_name}","${ps.model || ''}",${ps.total_quantity},${(ps.total_revenue || 0).toFixed(2)}\n`;
       });
     } else if (activeTab === 'expenses') {
       csv = 'Date,Category,Amount,Description\n';
       expenses.forEach(e => {
-        csv += `${e.date.split(' ')[0]},"${e.category}",${e.amount},"${(e.description || '').replace(/"/g, '""')}"\n`;
+        csv += `${e.date.split(' ')[0]},"${e.category}",${(e.amount || 0).toFixed(2)},"${(e.description || '').replace(/"/g, '""')}"\n`;
       });
     } else if (activeTab === 'ledger') {
       const activeParty = (partyType === 'customer' ? customers : suppliers).find(p => p.id === Number(selectedPartyId));
       csv = `Ledger Statement for: ${activeParty ? activeParty.name : ''} (${partyType})\n`;
       csv += `Period: ${startDate} to ${endDate}\n`;
-      csv += `Opening Balance: ${partyLedgerResult?.openingBalance || 0}\n\n`;
+      csv += `Opening Balance: ${(partyLedgerResult?.openingBalance || 0).toFixed(2)}\n\n`;
       csv += 'Date,Type,Description,Debit,Credit,Running Balance\n';
       partyLedgerResult?.entries.forEach(e => {
-        csv += `${e.date.split(' ')[0]},"${e.type}","${(e.description || '').replace(/"/g, '""')}",${e.debit},${e.credit},${e.balance}\n`;
+        csv += `${e.date.split(' ')[0]},"${e.type}","${(e.description || '').replace(/"/g, '""')}",${(e.debit || 0).toFixed(2)},${(e.credit || 0).toFixed(2)},${(e.balance || 0).toFixed(2)}\n`;
       });
-      csv += `\nClosing Balance: ${partyLedgerResult?.closingBalance || 0}\n`;
+      csv += `\nClosing Balance: ${(partyLedgerResult?.closingBalance || 0).toFixed(2)}\n`;
     }
     
     try {
@@ -610,7 +660,9 @@ export default function Reports() {
                 <div className="flex items-center bg-surface-soft p-1 rounded-md border border-hairline gap-1">
                   <button onClick={() => applyPreset('today')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">Today</button>
                   <button onClick={() => applyPreset('yesterday')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">Yesterday</button>
+                  <button onClick={() => applyPreset('this_week')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">This Week</button>
                   <button onClick={() => applyPreset('week')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">7 Days</button>
+                  <button onClick={() => applyPreset('this_month')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">This Month</button>
                   <button onClick={() => applyPreset('month')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">30 Days</button>
                   <button onClick={() => applyPreset('all')} className="px-2 py-1 rounded text-muted hover:text-ink hover:bg-canvas">All</button>
                 </div>
@@ -685,16 +737,16 @@ export default function Reports() {
                   <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalSalesAmount.toFixed(2)}</span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Taxable Value</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalSalesTaxable.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
                   <span className="text-[11px] font-semibold uppercase text-muted block">Total GST Collected</span>
                   <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalSalesTax.toFixed(2)}</span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
-                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Bills</span>
-                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{sales.length}</span>
-                </div>
-                <div className="p-3 bg-canvas rounded-lg border border-hairline">
-                  <span className="text-[11px] font-semibold uppercase text-muted block">Units Sold</span>
-                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{totalSalesQty}</span>
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Invoices & Qty</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{sales.length} Bills ({totalSalesQty} Qty)</span>
                 </div>
               </>
             ) : activeTab === 'purchases' ? (
@@ -704,16 +756,16 @@ export default function Reports() {
                   <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalPurchasesAmount.toFixed(2)}</span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Taxable Value</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalPurchasesTaxable.toFixed(2)}</span>
+                </div>
+                <div className="p-3 bg-canvas rounded-lg border border-hairline">
                   <span className="text-[11px] font-semibold uppercase text-muted block">Total GST Paid</span>
                   <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">₹{totalPurchasesTax.toFixed(2)}</span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
-                  <span className="text-[11px] font-semibold uppercase text-muted block">Purchase Invoices</span>
-                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{purchases.length}</span>
-                </div>
-                <div className="p-3 bg-canvas rounded-lg border border-hairline">
-                  <span className="text-[11px] font-semibold uppercase text-muted block">Units Purchased</span>
-                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{totalPurchasesQty}</span>
+                  <span className="text-[11px] font-semibold uppercase text-muted block">Purchase Invoices & Qty</span>
+                  <span className="text-xl font-bold text-ink tabular-nums mt-0.5 block">{purchases.length} Bills ({totalPurchasesQty} Qty)</span>
                 </div>
               </>
             ) : activeTab === 'inventory' ? (
@@ -751,21 +803,29 @@ export default function Reports() {
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
                   <span className="text-[11px] font-semibold uppercase text-muted block">Opening Balance</span>
                   <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">
-                    ₹{Math.abs(partyLedgerResult.openingBalance).toFixed(2)} {partyLedgerResult.openingBalance >= 0 ? '(Dr)' : '(Cr)'}
+                    ₹{Math.abs(partyLedgerResult.openingBalance).toFixed(2)} {getPartySuffix(partyLedgerResult.openingBalance, partyType)}
                   </span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
-                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Debited (+)</span>
-                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">₹{partyLedgerResult.totalDebit.toFixed(2)}</span>
+                  <span className="text-[11px] font-semibold uppercase text-muted block">
+                    {partyType === 'customer' ? 'Total Debited / Billed (+)' : 'Total Credited / Purchases (+)'}
+                  </span>
+                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">
+                    ₹{(partyType === 'customer' ? partyLedgerResult.totalDebit : partyLedgerResult.totalCredit).toFixed(2)}
+                  </span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
-                  <span className="text-[11px] font-semibold uppercase text-muted block">Total Credited (-)</span>
-                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">₹{partyLedgerResult.totalCredit.toFixed(2)}</span>
+                  <span className="text-[11px] font-semibold uppercase text-muted block">
+                    {partyType === 'customer' ? 'Total Credited / Paid (-)' : 'Total Debited / Paid (-)'}
+                  </span>
+                  <span className="text-base font-bold text-ink tabular-nums mt-0.5 block">
+                    ₹{(partyType === 'customer' ? partyLedgerResult.totalCredit : partyLedgerResult.totalDebit).toFixed(2)}
+                  </span>
                 </div>
                 <div className="p-3 bg-canvas rounded-lg border border-hairline">
                   <span className="text-[11px] font-semibold uppercase text-muted block">Closing Balance</span>
                   <span className="text-base font-bold text-primary tabular-nums mt-0.5 block">
-                    ₹{Math.abs(partyLedgerResult.closingBalance).toFixed(2)} {partyLedgerResult.closingBalance >= 0 ? '(Dr)' : '(Cr)'}
+                    ₹{Math.abs(partyLedgerResult.closingBalance).toFixed(2)} {getPartySuffix(partyLedgerResult.closingBalance, partyType)}
                   </span>
                 </div>
               </>
@@ -793,7 +853,9 @@ export default function Reports() {
                       <th className="px-4 py-3 whitespace-nowrap">Customer</th>
                       <th className="px-4 py-3 min-w-64">Items / Products</th>
                       <th className="px-4 py-3 text-center whitespace-nowrap">Total Qty</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Taxable (₹)</th>
                       <th className="px-4 py-3 text-right whitespace-nowrap">Tax (₹)</th>
+                      <th className="px-4 py-3 text-center whitespace-nowrap">Mode</th>
                       <th className="px-4 py-3 text-right whitespace-nowrap">Net Amount (₹)</th>
                     </>
                   )}
@@ -806,6 +868,7 @@ export default function Reports() {
                       <th className="px-4 py-3 min-w-64">Items / Details</th>
                       <th className="px-4 py-3 text-center whitespace-nowrap">Total Qty</th>
                       <th className="px-4 py-3 whitespace-nowrap">Status</th>
+                      <th className="px-4 py-3 text-right whitespace-nowrap">Taxable (₹)</th>
                       <th className="px-4 py-3 text-right whitespace-nowrap">Tax (₹)</th>
                       <th className="px-4 py-3 text-right whitespace-nowrap">Net Amount (₹)</th>
                     </>
@@ -855,43 +918,57 @@ export default function Reports() {
 
               <tbody className="divide-y divide-hairline">
                 {/* 1. SALES ROWS */}
-                {activeTab === 'sales' && sales.map((sale, idx) => (
-                  <tr key={sale.id} className="hover:bg-surface-soft/60 transition-colors">
-                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{sale.date.split(' ')[0]}</td>
-                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{sale.invoice_number || `INV-${sale.id}`}</td>
-                    <td className="px-4 py-3 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in Customer'}</td>
-                    <td className="px-4 py-3 text-body max-w-xs truncate">{sale.products_bought || '-'}</td>
-                    <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{sale.total_quantity || 0}</td>
-                    <td className="px-4 py-3 text-right text-muted tabular-nums">₹{(sale.tax_amount || 0).toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{sale.net_amount.toFixed(2)}</td>
-                  </tr>
-                ))}
+                {activeTab === 'sales' && sales.map((sale, idx) => {
+                  const taxable = sale.taxable_amount != null ? sale.taxable_amount : ((sale.net_amount || 0) - (sale.tax_amount || 0));
+                  return (
+                    <tr key={sale.id} className="hover:bg-surface-soft/60 transition-colors">
+                      <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{sale.date.split(' ')[0]}</td>
+                      <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{sale.invoice_number || `INV-${sale.id}`}</td>
+                      <td className="px-4 py-3 font-medium text-ink whitespace-nowrap">{sale.customer_name || 'Walk-in Customer'}</td>
+                      <td className="px-4 py-3 text-body max-w-xs truncate">{sale.products_bought || '-'}</td>
+                      <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{sale.total_quantity || 0}</td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums">₹{taxable.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums">₹{(sale.tax_amount || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-center whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-surface-soft border border-hairline text-body">
+                          {sale.payment_method || 'Cash'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{(sale.net_amount || 0).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
 
                 {/* 2. PURCHASES ROWS */}
-                {activeTab === 'purchases' && purchases.map((purchase, idx) => (
-                  <tr key={purchase.id} className="hover:bg-surface-soft/60 transition-colors">
-                    <td className="px-4 py-3 text-muted">{idx + 1}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.date.split(' ')[0]}</td>
-                    <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{purchase.supplier_name}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.invoice_number}</td>
-                    <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.supplier_invoice_date || '-'}</td>
-                    <td className="px-4 py-3 text-body max-w-xs truncate">{purchase.products_bought || '-'}</td>
-                    <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{purchase.total_quantity || 0}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
-                        {purchase.status || 'Recorded'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-muted tabular-nums">₹{(purchase.tax_amount || 0).toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{purchase.net_amount.toFixed(2)}</td>
-                  </tr>
-                ))}
+                {activeTab === 'purchases' && purchases.map((purchase, idx) => {
+                  const taxable = purchase.taxable_amount != null ? purchase.taxable_amount : ((purchase.net_amount || 0) - (purchase.tax_amount || 0));
+                  return (
+                    <tr key={purchase.id} className="hover:bg-surface-soft/60 transition-colors">
+                      <td className="px-4 py-3 text-muted">{idx + 1}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.date.split(' ')[0]}</td>
+                      <td className="px-4 py-3 font-semibold text-ink whitespace-nowrap">{purchase.supplier_name}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.invoice_number}</td>
+                      <td className="px-4 py-3 text-muted whitespace-nowrap">{purchase.supplier_invoice_date || '-'}</td>
+                      <td className="px-4 py-3 text-body max-w-xs truncate">{purchase.products_bought || '-'}</td>
+                      <td className="px-4 py-3 text-center font-medium text-ink tabular-nums">{purchase.total_quantity || 0}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                          {purchase.status || 'Recorded'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums">₹{taxable.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums">₹{(purchase.tax_amount || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-ink tabular-nums">₹{(purchase.net_amount || 0).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
 
                 {/* 3. INVENTORY STOCK ROWS */}
                 {activeTab === 'inventory' && filteredInventory.map((item, idx) => {
                   const isOutOfStock = item.stock_quantity <= 0;
-                  const isLowStock = !isOutOfStock && item.stock_quantity <= (item.min_stock ?? 5);
+                  const threshold = getLowStockThreshold(item);
+                  const isLowStock = !isOutOfStock && item.stock_quantity <= threshold;
                   return (
                     <tr key={item.id} className="hover:bg-surface-soft/60 transition-colors">
                       <td className="px-4 py-3 text-muted">{idx + 1}</td>
@@ -906,9 +983,9 @@ export default function Reports() {
                         {isLowStock && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">Low</span>}
                         {isOutOfStock && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 font-medium">Out</span>}
                       </td>
-                      <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.purchase_price.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{item.selling_price.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">₹{item.stock_valuation.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{(item.purchase_price || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-muted tabular-nums whitespace-nowrap">₹{(item.selling_price || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">₹{(item.stock_valuation || 0).toFixed(2)}</td>
                     </tr>
                   );
                 })}
@@ -947,7 +1024,7 @@ export default function Reports() {
                       {entry.credit > 0 ? `₹${entry.credit.toFixed(2)}` : '-'}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-ink tabular-nums whitespace-nowrap">
-                      ₹{Math.abs(entry.balance).toFixed(2)} {entry.balance >= 0 ? '(Dr)' : '(Cr)'}
+                      ₹{Math.abs(entry.balance).toFixed(2)} {getPartySuffix(entry.balance, partyType)}
                     </td>
                   </tr>
                 ))}

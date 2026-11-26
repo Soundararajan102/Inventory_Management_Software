@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, 
   IndianRupee, 
@@ -35,7 +35,7 @@ import type { SalesReportItem, PurchaseReportItem, Expense } from '../lib/db';
 import { Receipt } from '../components/Receipt';
 import type { ReceiptData } from '../components/Receipt';
 
-type SortField = 'date' | 'invoice_number' | 'entity_name' | 'total_quantity' | 'net_amount' | 'tax_amount' | 'category' | 'amount';
+type SortField = 'date' | 'invoice_number' | 'entity_name' | 'total_quantity' | 'taxable_amount' | 'net_amount' | 'tax_amount' | 'category' | 'amount';
 type SortOrder = 'asc' | 'desc';
 
 export default function DayBook() {
@@ -80,13 +80,19 @@ export default function DayBook() {
   }
 
   function adjustDays(days: number) {
-    const s = new Date(startDate);
-    s.setDate(s.getDate() + days);
-    setStartDate(s.toISOString().split('T')[0]);
+    const [sy, sm, sd] = startDate.split('-').map(Number);
+    const s = new Date(sy, sm - 1, sd + days);
+    const syStr = s.getFullYear();
+    const smStr = String(s.getMonth() + 1).padStart(2, '0');
+    const sdStr = String(s.getDate()).padStart(2, '0');
+    setStartDate(`${syStr}-${smStr}-${sdStr}`);
     
-    const e = new Date(endDate);
-    e.setDate(e.getDate() + days);
-    setEndDate(e.toISOString().split('T')[0]);
+    const [ey, em, ed] = endDate.split('-').map(Number);
+    const e = new Date(ey, em - 1, ed + days);
+    const eyStr = e.getFullYear();
+    const emStr = String(e.getMonth() + 1).padStart(2, '0');
+    const edStr = String(e.getDate()).padStart(2, '0');
+    setEndDate(`${eyStr}-${emStr}-${edStr}`);
   }
 
   useEffect(() => {
@@ -111,6 +117,32 @@ export default function DayBook() {
 
   const totalSales = sales.reduce((sum, s) => sum + s.net_amount, 0);
   const totalPurchases = purchases.reduce((sum, p) => sum + p.net_amount, 0);
+
+  const paymentModeSummary = useMemo(() => {
+    let cash = 0;
+    let upi = 0;
+    let card = 0;
+    let bank = 0;
+    let cheque = 0;
+    let other = 0;
+    
+    sales.forEach(s => {
+      if (s.status === 'Unpaid') return;
+      const mode = (s.payment_method || 'Cash').toLowerCase();
+      const amt = (s.paid_amount !== undefined && s.paid_amount !== null)
+        ? s.paid_amount
+        : (s.status === 'Paid' ? (s.net_amount || 0) : 0);
+
+      if (mode.includes('cash')) cash += amt;
+      else if (mode.includes('upi')) upi += amt;
+      else if (mode.includes('card')) card += amt;
+      else if (mode.includes('bank') || mode.includes('neft') || mode.includes('rtgs') || mode.includes('transfer')) bank += amt;
+      else if (mode.includes('cheque') || mode.includes('check')) cheque += amt;
+      else other += amt;
+    });
+
+    return { cash, upi, card, bank, cheque, other };
+  }, [sales]);
 
   // Sorting & Filtering logic
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -175,6 +207,10 @@ export default function DayBook() {
       cmp = collator.compare(aVal, bVal);
     } else if (sortField === 'total_quantity') {
       cmp = (a.total_quantity || 0) - (b.total_quantity || 0);
+    } else if (sortField === 'taxable_amount') {
+      const aTaxable = a.taxable_amount != null ? a.taxable_amount : ((a.net_amount || 0) - (a.tax_amount || 0));
+      const bTaxable = b.taxable_amount != null ? b.taxable_amount : ((b.net_amount || 0) - (b.tax_amount || 0));
+      cmp = aTaxable - bTaxable;
     } else if (sortField === 'tax_amount') {
       cmp = (a.tax_amount || 0) - (b.tax_amount || 0);
     } else if (sortField === 'net_amount') {
@@ -221,6 +257,10 @@ export default function DayBook() {
       cmp = collator.compare(aVal, bVal);
     } else if (sortField === 'total_quantity') {
       cmp = (a.total_quantity || 0) - (b.total_quantity || 0);
+    } else if (sortField === 'taxable_amount') {
+      const aTaxable = a.taxable_amount != null ? a.taxable_amount : ((a.net_amount || 0) - (a.tax_amount || 0));
+      const bTaxable = b.taxable_amount != null ? b.taxable_amount : ((b.net_amount || 0) - (b.tax_amount || 0));
+      cmp = aTaxable - bTaxable;
     } else if (sortField === 'tax_amount') {
       cmp = (a.tax_amount || 0) - (b.tax_amount || 0);
     } else if (sortField === 'net_amount') {
@@ -328,18 +368,19 @@ export default function DayBook() {
         is_group: false,
         barcode: '',
         model: item.model,
-        hsn_code: item.hsn_code || ''
+        hsn_code: item.hsn_code || '',
+        discount: (item as any).discount || 0,
+        discount_type: (item as any).discount_type || 'percentage',
+        discount_percent: (item as any).discount_percent || 0,
+        taxable_amount: (item as any).taxable_amount,
+        net_amount: (item as any).net_amount
       } as any));
 
-      const subtotal = sale.net_amount - sale.tax_amount + sale.discount;
       const originalPriceBasis = items.reduce((sum, i) => sum + (i.selling_price * i.cart_qty), 0);
-      const netAmount = sale.net_amount || 0;
-      const taxAmount = sale.tax_amount || 0;
-      const discountAmount = sale.discount || 0;
-      const diffInclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount));
-      const diffExclusive = Math.abs(netAmount - (originalPriceBasis - discountAmount + taxAmount));
-      const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
-      const taxMethod = isInclusive ? 'inclusive' : 'exclusive';
+      const subtotal = detail.total_amount ?? (sale as any).total_amount ?? originalPriceBasis;
+      const taxMethod = ((detail.tax_method || (sale as any).tax_method || 'exclusive') as 'exclusive' | 'inclusive');
+      const taxableAmount = detail.taxable_amount ?? (sale as any).taxable_amount;
+      const roundOff = detail.round_off ?? (sale as any).round_off ?? 0;
 
       setPrintData({
         invoiceNumber: sale.invoice_number,
@@ -360,7 +401,10 @@ export default function DayBook() {
         discount: sale.discount || 0,
         netAmount: sale.net_amount,
         paidAmount: detail.paid_amount ?? (sale.status === 'Paid' ? sale.net_amount : (sale.status === 'Unpaid' ? 0 : sale.net_amount)),
-        dispatchDetails: (detail as any).dispatchDetails || ((detail as any).dispatch_details ? (typeof (detail as any).dispatch_details === 'string' ? JSON.parse((detail as any).dispatch_details) : (detail as any).dispatch_details) : undefined)
+        roundOff,
+        taxableAmount,
+        dispatchDetails: (detail as any).dispatchDetails || ((detail as any).dispatch_details ? (typeof (detail as any).dispatch_details === 'string' ? JSON.parse((detail as any).dispatch_details) : (detail as any).dispatch_details) : undefined),
+        status: sale.status || undefined
       });
 
       setTimeout(() => {
@@ -419,14 +463,18 @@ export default function DayBook() {
                 const day = d.getDay();
                 const diff = d.getDate() - day + (day === 0 ? -6 : 1);
                 const monday = new Date(d.setDate(diff));
-                setStartDate(monday.toISOString().split('T')[0]);
-                setEndDate(new Date().toISOString().split('T')[0]);
+                const mondayOffset = monday.getTimezoneOffset() * 60000;
+                const localMonday = new Date(monday.getTime() - mondayOffset);
+                setStartDate(localMonday.toISOString().split('T')[0]);
+                setEndDate(getDaysAgo(0));
               }} className="px-2.5 py-1 text-muted hover:text-ink hover:bg-canvas rounded transition-colors whitespace-nowrap cursor-pointer">This Week</button>
               <button onClick={() => {
                 const d = new Date();
                 const firstDay = new Date(d.getFullYear(), d.getMonth(), 1);
-                setStartDate(firstDay.toISOString().split('T')[0]);
-                setEndDate(new Date().toISOString().split('T')[0]);
+                const firstDayOffset = firstDay.getTimezoneOffset() * 60000;
+                const localFirst = new Date(firstDay.getTime() - firstDayOffset);
+                setStartDate(localFirst.toISOString().split('T')[0]);
+                setEndDate(getDaysAgo(0));
               }} className="px-2.5 py-1 text-muted hover:text-ink hover:bg-canvas rounded transition-colors whitespace-nowrap cursor-pointer">This Month</button>
             </div>
           </div>
@@ -507,12 +555,43 @@ export default function DayBook() {
               <div>
                 <p className="text-[10px] font-semibold text-muted uppercase tracking-wider">Net Profit</p>
                 <p className={`text-sm font-bold ${profit >= 0 ? 'text-emerald-700' : 'text-signature-coral'}`}>
-                  ₹{profit.toFixed(2)}
+                  {profit < 0 ? `-₹${Math.abs(profit).toFixed(2)}` : `₹${profit.toFixed(2)}`}
                 </p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Collections Breakdown Pills */}
+        {activeTab === 'sales' && sales.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap text-xs bg-surface-soft/60 px-3 py-1.5 rounded-lg border border-hairline flex-shrink-0">
+            <span className="font-bold text-muted uppercase text-[10px] tracking-wider">Collections:</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface border border-hairline font-semibold text-ink">
+              💵 Cash: <strong className="text-emerald-600">₹{paymentModeSummary.cash.toFixed(2)}</strong>
+            </span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface border border-hairline font-semibold text-ink">
+              📱 UPI: <strong className="text-primary">₹{paymentModeSummary.upi.toFixed(2)}</strong>
+            </span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface border border-hairline font-semibold text-ink">
+              💳 Card: <strong className="text-purple-600">₹{paymentModeSummary.card.toFixed(2)}</strong>
+            </span>
+            {paymentModeSummary.bank > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface border border-hairline font-semibold text-ink">
+                🏛️ Bank: <strong className="text-cyan-600">₹{paymentModeSummary.bank.toFixed(2)}</strong>
+              </span>
+            )}
+            {paymentModeSummary.cheque > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface border border-hairline font-semibold text-ink">
+                🏦 Cheque: <strong className="text-amber-600">₹{paymentModeSummary.cheque.toFixed(2)}</strong>
+              </span>
+            )}
+            {paymentModeSummary.other > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface border border-hairline font-semibold text-ink">
+                Other: <strong>₹{paymentModeSummary.other.toFixed(2)}</strong>
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Main Records Container - High Density Ledger Table */}
         <div className="bg-canvas rounded-xl shadow-xs border border-hairline flex flex-col overflow-hidden flex-1 min-h-0">
@@ -609,6 +688,7 @@ export default function DayBook() {
                     <option value="all">All Status</option>
                     <option value="Paid">Paid</option>
                     <option value="Unpaid">Unpaid</option>
+                    <option value="Partially Returned">Partially Returned</option>
                     <option value="Returned">Returned</option>
                   </select>
                 </div>
@@ -628,6 +708,7 @@ export default function DayBook() {
                       <option value="invoice_number">{activeTab === 'sales' ? 'Bill No' : 'Invoice #'}</option>
                       <option value="entity_name">{activeTab === 'sales' ? 'Customer' : 'Supplier'}</option>
                       <option value="net_amount">Net Amount</option>
+                      <option value="taxable_amount">Taxable Amount</option>
                       <option value="total_quantity">Total Qty</option>
                       <option value="tax_amount">Tax</option>
                     </>
@@ -695,7 +776,7 @@ export default function DayBook() {
                     {renderSortHeader('Customer', 'entity_name')}
                     <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider min-w-[240px]">Products Bought</th>
                     {renderSortHeader('Total Qty', 'total_quantity', 'center')}
-                    <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-right whitespace-nowrap">Taxable (₹)</th>
+                    {renderSortHeader('Taxable (₹)', 'taxable_amount', 'right')}
                     {renderSortHeader('Tax (₹)', 'tax_amount', 'right')}
                     {renderSortHeader('Net Amount (₹)', 'net_amount', 'right')}
                     <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-center whitespace-nowrap">Action</th>
@@ -725,7 +806,11 @@ export default function DayBook() {
                             <span>{sale.customer_name || 'Walk-in Customer'}</span>
                             {sale.status && sale.status !== 'Paid' && (
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                                sale.status === 'Returned' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                                sale.status === 'Returned'
+                                  ? 'bg-red-100 text-red-700'
+                                  : sale.status === 'Partially Returned'
+                                  ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                  : 'bg-amber-100 text-amber-700'
                               }`}>
                                 {sale.status}
                               </span>
@@ -766,8 +851,21 @@ export default function DayBook() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-center font-bold text-ink whitespace-nowrap">{sale.total_quantity || 0}</td>
-                        <td className="px-4 py-2.5 text-right text-muted whitespace-nowrap">{(sale.net_amount - sale.tax_amount).toFixed(2)}</td>
+                        <td className="px-4 py-2.5 text-center font-bold text-ink whitespace-nowrap">
+                          {sale.status === 'Returned' ? (
+                            <span className="text-red-600 font-semibold" title={`Original Qty: ${sale.total_quantity || 0} (Fully Returned)`}>
+                              0 <span className="text-[10px] text-muted font-normal">({sale.total_quantity} ret)</span>
+                            </span>
+                          ) : sale.total_returned_qty && sale.total_returned_qty > 0 ? (
+                            <span className="font-bold text-ink" title={`Original Qty: ${sale.total_quantity || 0} (${sale.total_returned_qty} returned)`}>
+                              {Math.max(0, (sale.total_quantity || 0) - sale.total_returned_qty)}{' '}
+                              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">({sale.total_returned_qty} ret)</span>
+                            </span>
+                          ) : (
+                            sale.total_quantity || 0
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-muted whitespace-nowrap">{(sale.taxable_amount !== undefined && sale.taxable_amount !== null && (sale.status === 'Returned' || sale.taxable_amount > 0) ? sale.taxable_amount : (sale.net_amount - sale.tax_amount)).toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right text-muted whitespace-nowrap">{sale.tax_amount.toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right font-bold text-ink text-sm whitespace-nowrap">₹{sale.net_amount.toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-center whitespace-nowrap">
@@ -804,16 +902,26 @@ export default function DayBook() {
                                   className="absolute right-0 top-6 w-32 bg-canvas border border-hairline rounded-lg shadow-lg py-1 z-20 animate-fade-in-up"
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  <button 
-                                    onClick={() => {
-                                      setOpenDropdownId(null);
-                                      navigate(`/pos?editId=${sale.id}`, { state: { startDate, endDate, activeTab: 'sales' } });
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-surface-soft flex items-center gap-2 cursor-pointer"
-                                  >
-                                    <Edit className="w-3.5 h-3.5 text-primary" />
-                                    Edit Bill
-                                  </button>
+                                  {sale.status === 'Returned' ? (
+                                    <div 
+                                      className="w-full text-left px-3 py-1.5 text-xs text-muted flex items-center gap-2 cursor-not-allowed select-none opacity-60" 
+                                      title="Returned bills cannot be edited"
+                                    >
+                                      <Edit className="w-3.5 h-3.5 text-muted/50" />
+                                      <span className="line-through">Edit Bill</span>
+                                    </div>
+                                  ) : (
+                                    <button 
+                                      onClick={() => {
+                                        setOpenDropdownId(null);
+                                        navigate(`/pos?editId=${sale.id}`, { state: { startDate, endDate, activeTab: 'sales' } });
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-surface-soft flex items-center gap-2 cursor-pointer"
+                                    >
+                                      <Edit className="w-3.5 h-3.5 text-primary" />
+                                      Edit Bill
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -853,7 +961,7 @@ export default function DayBook() {
                     {renderSortHeader('Invoice #', 'invoice_number')}
                     <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider min-w-[240px]">Products Bought</th>
                     {renderSortHeader('Total Qty', 'total_quantity', 'center')}
-                    <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-right whitespace-nowrap">Taxable (₹)</th>
+                    {renderSortHeader('Taxable (₹)', 'taxable_amount', 'right')}
                     {renderSortHeader('Tax (₹)', 'tax_amount', 'right')}
                     {renderSortHeader('Net Amount (₹)', 'net_amount', 'right')}
                     <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-center whitespace-nowrap">Action</th>
@@ -871,7 +979,11 @@ export default function DayBook() {
                             <span>{purchase.supplier_name}</span>
                             {purchase.status && purchase.status !== 'Paid' && (
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                                purchase.status === 'Returned' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                                purchase.status === 'Returned'
+                                  ? 'bg-red-100 text-red-700'
+                                  : purchase.status === 'Partially Returned'
+                                  ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                  : 'bg-amber-100 text-amber-700'
                               }`}>
                                 {purchase.status}
                               </span>
@@ -924,8 +1036,21 @@ export default function DayBook() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-center font-bold text-ink whitespace-nowrap">{purchase.total_quantity || 0}</td>
-                        <td className="px-4 py-2.5 text-right text-muted whitespace-nowrap">{(purchase.net_amount - purchase.tax_amount).toFixed(2)}</td>
+                        <td className="px-4 py-2.5 text-center font-bold text-ink whitespace-nowrap">
+                          {purchase.status === 'Returned' ? (
+                            <span className="text-red-600 font-semibold" title={`Original Qty: ${purchase.total_quantity || 0} (Fully Returned)`}>
+                              0 <span className="text-[10px] text-muted font-normal">({purchase.total_quantity} ret)</span>
+                            </span>
+                          ) : purchase.total_returned_qty && purchase.total_returned_qty > 0 ? (
+                            <span className="font-bold text-ink" title={`Original Qty: ${purchase.total_quantity || 0} (${purchase.total_returned_qty} returned)`}>
+                              {Math.max(0, (purchase.total_quantity || 0) - purchase.total_returned_qty)}{' '}
+                              <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">({purchase.total_returned_qty} ret)</span>
+                            </span>
+                          ) : (
+                            purchase.total_quantity || 0
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-muted whitespace-nowrap">{(purchase.taxable_amount !== undefined && purchase.taxable_amount !== null && (purchase.status === 'Returned' || purchase.taxable_amount > 0) ? purchase.taxable_amount : (purchase.net_amount - purchase.tax_amount)).toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right text-muted whitespace-nowrap">{purchase.tax_amount.toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-right font-bold text-ink text-sm whitespace-nowrap">₹{purchase.net_amount.toFixed(2)}</td>
                         <td className="px-4 py-2.5 text-center whitespace-nowrap">
@@ -954,16 +1079,26 @@ export default function DayBook() {
                                   className="absolute right-0 top-6 w-32 bg-canvas border border-hairline rounded-lg shadow-lg py-1 z-20 animate-fade-in-up"
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  <button 
-                                    onClick={() => {
-                                      setOpenDropdownId(null);
-                                      navigate(`/purchases?editId=${purchase.id}`, { state: { startDate, endDate, activeTab: 'purchases' } });
-                                    }}
-                                    className="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-surface-soft flex items-center gap-2 cursor-pointer"
-                                  >
-                                    <Edit className="w-3.5 h-3.5 text-primary" />
-                                    Edit Bill
-                                  </button>
+                                  {purchase.status === 'Returned' ? (
+                                    <div 
+                                      className="w-full text-left px-3 py-1.5 text-xs text-muted flex items-center gap-2 cursor-not-allowed select-none opacity-60" 
+                                      title="Returned purchase bills cannot be edited"
+                                    >
+                                      <Edit className="w-3.5 h-3.5 text-muted/50" />
+                                      <span className="line-through">Edit Bill</span>
+                                    </div>
+                                  ) : (
+                                    <button 
+                                      onClick={() => {
+                                        setOpenDropdownId(null);
+                                        navigate(`/purchases?editId=${purchase.id}`, { state: { startDate, endDate, activeTab: 'purchases' } });
+                                      }}
+                                      className="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-surface-soft flex items-center gap-2 cursor-pointer"
+                                    >
+                                      <Edit className="w-3.5 h-3.5 text-primary" />
+                                      Edit Bill
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>

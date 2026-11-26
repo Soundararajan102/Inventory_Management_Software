@@ -1,6 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { User, KeyRound, X, Building2, ChevronDown } from 'lucide-react';
+import { 
+  Building2, 
+  ChevronDown, 
+  KeyRound, 
+  X, 
+  Lock, 
+  User, 
+  Eye, 
+  EyeOff, 
+  ArrowRight,
+  CheckCircle2,
+  AlertCircle
+} from 'lucide-react';
 import { CompanyModal } from '../components/CompanyModal';
 import { getActiveCompany } from '../lib/companies';
 import { getDb } from '../lib/db';
@@ -13,10 +25,12 @@ export default function Login() {
   const [usernames, setUsernames] = useState<string[]>([]);
   const [selectedUsername, setSelectedUsername] = useState('');
   const [pin, setPin] = useState('');
+  const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showCompanyModal, setShowCompanyModal] = useState(false);
   const activeCompany = getActiveCompany();
+  const pinInputRef = useRef<HTMLInputElement>(null);
   
   // Forgot PIN state
   const [showForgotPin, setShowForgotPin] = useState(false);
@@ -28,17 +42,21 @@ export default function Login() {
     loadUsers();
   }, []);
 
+  useEffect(() => {
+    pinInputRef.current?.focus();
+  }, [selectedUsername]);
+
   async function loadUsers() {
     try {
       const db = await getDb();
       const users = await db.select<{username: string}[]>('SELECT username FROM users');
-      setUsernames(users.map(u => u.username));
-      if (users.length > 0) {
-        setSelectedUsername(users[0].username);
+      const names = users.map(u => u.username);
+      setUsernames(names);
+      if (names.length > 0) {
+        setSelectedUsername(names[0]);
       }
     } catch (e) {
       console.error(e);
-      // Fallback in case DB is uninitialized or missing table
       setUsernames(['Admin']);
       setSelectedUsername('Admin');
     }
@@ -46,99 +64,164 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!pin) return;
     setError('');
     setIsLoading(true);
 
     const success = await login(selectedUsername, pin);
     if (!success) {
-      setError('Invalid PIN. Please try again.');
+      setError('Incorrect security PIN. Please try again.');
       setPin('');
+      pinInputRef.current?.focus();
     }
     
     setIsLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface-soft p-4 relative overflow-hidden">
-      {/* Decorative background elements for premium feel */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/5 blur-[100px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[120px] pointer-events-none" />
+    <div className="min-h-screen bg-slate-100/80 flex items-center justify-center p-4 relative select-none">
+      {/* Subtle modern ambient background */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(37,99,235,0.08),rgba(255,255,255,0))] pointer-events-none" />
 
-      <div className="max-w-md w-full bg-canvas rounded-xl border border-hairline overflow-hidden shadow-2xl">
-        <div className="p-10 text-center border-b border-hairline bg-surface-soft">
-          <div className="w-16 h-16 mx-auto mb-5 shadow-sm rounded-2xl overflow-hidden border border-hairline bg-canvas">
-            <img src="/logo.png" alt="Electro Hub Logo" className="w-full h-full object-cover p-1" />
-          </div>
-          <h1 className="text-3xl font-display font-medium text-ink tracking-tight">Electro Hub</h1>
-          <p className="text-body mt-2 text-base">Sign in to your account</p>
-        </div>
+      {/* Main Login Card - Professional Desktop Proportions */}
+      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl shadow-slate-200/70 border border-slate-200/80 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         
-        {/* Active Company Selector Pill on Login */}
-        <div className="px-8 pt-6 pb-0">
-          <button
-            type="button"
-            onClick={() => setShowCompanyModal(true)}
-            className="w-full py-2.5 px-3 bg-surface-soft hover:bg-surface-strong border border-hairline rounded-lg flex items-center justify-between text-xs text-ink transition-colors shadow-2xs group cursor-pointer"
-            title="Switch Business / Company"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Building2 className="w-4 h-4 text-primary shrink-0" />
-              <div className="text-left truncate">
-                <span className="text-[10px] text-muted block uppercase tracking-wider font-semibold">Active Business</span>
-                <span className="font-bold text-xs truncate block text-ink">{activeCompany.name}</span>
-              </div>
-            </div>
-            <span className="text-[11px] text-primary font-semibold flex items-center gap-1 shrink-0 group-hover:underline">
-              Switch <ChevronDown className="w-3 h-3" />
-            </span>
-          </button>
+        {/* Header Section */}
+        <div className="pt-8 pb-5 px-8 text-center flex flex-col items-center">
+          <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200/90 shadow-sm p-1.5 flex items-center justify-center mb-4 transition-transform hover:scale-105">
+            <img src="/logo.png" alt="Electro Hub" className="w-full h-full object-contain" />
+          </div>
+
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            {activeCompany.name || 'Electro Hub'}
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Sign in to your account
+          </p>
+
+          {/* Business / Company Switcher Pill */}
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setShowCompanyModal(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs text-slate-700 transition-colors cursor-pointer font-medium shadow-2xs group"
+              title="Click to Switch Business"
+            >
+              <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="font-semibold text-slate-900 truncate max-w-[170px]">{activeCompany.name}</span>
+              <span className="text-[11px] text-blue-600 font-bold group-hover:underline flex items-center">
+                Switch <ChevronDown className="w-3 h-3 ml-0.5" />
+              </span>
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleLogin} className="p-8">
+        {/* Divider */}
+        <div className="h-px bg-slate-100 w-full" />
+
+        {/* Form Section */}
+        <form onSubmit={handleLogin} className="p-8 space-y-5">
           {error && (
-            <div className="mb-6 p-3 bg-canvas border border-signature-coral text-signature-coral rounded-sm text-sm text-center font-medium animate-in fade-in">
-              {error}
+            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-2 font-medium animate-in fade-in">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
 
-          <div className="mb-6">
-            <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Select User</label>
+          {/* User Selection */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+              Select User
+            </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <User className="w-4 h-4" />
+              </div>
               <select
                 value={selectedUsername}
-                onChange={(e) => setSelectedUsername(e.target.value)}
-                className="w-full pl-9 pr-4 py-3 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors font-medium text-ink appearance-none text-sm"
+                onChange={(e) => {
+                  setSelectedUsername(e.target.value);
+                  setPin('');
+                  setError('');
+                }}
+                className="w-full pl-10 pr-10 py-3 bg-slate-50/70 hover:bg-slate-100/60 border border-slate-200 rounded-xl font-medium text-slate-900 text-sm focus:outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-500/10 transition-all cursor-pointer appearance-none"
               >
                 {usernames.map(u => (
                   <option key={u} value={u}>{u}</option>
                 ))}
               </select>
+              <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
             </div>
           </div>
 
-          <div className="mb-8">
-            <label className="block text-xs font-medium text-muted uppercase tracking-wider mb-2">Enter PIN</label>
-            <input
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              className="w-full px-4 py-3 bg-canvas border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary transition-colors font-medium text-center text-xl tracking-[0.5em] text-ink placeholder-muted"
-              placeholder="••••"
-              required
-            />
+          {/* Security PIN Input */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                Enter PIN
+              </label>
+              <span className="text-[11px] text-slate-400 font-medium">
+                {pin.length}/4 digits
+              </span>
+            </div>
+            <div className="relative">
+              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                ref={pinInputRef}
+                type={showPin ? 'text' : 'password'}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={4}
+                value={pin}
+                onChange={(e) => {
+                  setError('');
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                  setPin(val);
+                }}
+                placeholder="Enter 4-digit PIN"
+                className={`w-full pl-10 pr-11 py-3 bg-slate-50/70 hover:bg-slate-100/60 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white focus:ring-4 focus:ring-blue-500/10 transition-all text-center placeholder:text-slate-400 placeholder:text-xs placeholder:tracking-normal placeholder:font-normal ${
+                  pin ? 'font-mono text-xl font-bold tracking-[0.5em]' : 'text-sm font-medium'
+                }`}
+                required
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowPin(!showPin)}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer"
+                title={showPin ? 'Hide PIN' : 'Show PIN'}
+              >
+                {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={isLoading || pin.length === 0}
-            className="w-full py-3.5 rounded-lg font-medium transition-all bg-primary text-on-primary shadow-md hover:shadow-lg hover:bg-primary-active disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
-          >
-            {isLoading ? 'Verifying...' : 'Unlock System'}
-          </button>
-          <div className="mt-6 text-center">
+          {/* Submit Button */}
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={isLoading || pin.length < 4}
+              className={`w-full py-3.5 px-4 rounded-xl font-bold text-sm text-white shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                pin.length === 4 && !isLoading
+                  ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/25 hover:-translate-y-0.5 active:translate-y-0'
+                  : 'bg-slate-200 text-slate-400 shadow-none cursor-not-allowed'
+              }`}
+            >
+              {isLoading ? (
+                <span>Verifying...</span>
+              ) : (
+                <>
+                  <span>Unlock System</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Forgot PIN Link */}
+          <div className="pt-2 text-center">
             <button
               type="button"
               onClick={() => {
@@ -147,7 +230,7 @@ export default function Login() {
                 setResetSuccess('');
                 setResetToken('');
               }}
-              className="text-sm font-medium text-muted hover:text-ink transition-colors border-b border-transparent hover:border-ink"
+              className="text-xs font-semibold text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
             >
               Forgot Admin PIN?
             </button>
@@ -155,50 +238,54 @@ export default function Login() {
         </form>
       </div>
 
+      {/* Forgot Admin PIN Recovery Modal */}
       {showForgotPin && (
-        <div className="fixed inset-0 bg-ink/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="bg-canvas rounded-xl shadow-2xl max-w-sm w-full overflow-hidden border border-hairline animate-in zoom-in-95">
-            <div className="p-6 border-b border-hairline flex justify-between items-center bg-surface-soft">
-              <div className="flex items-center gap-3 text-ink">
-                <KeyRound className="w-5 h-5 text-muted" />
-                <h3 className="font-medium text-lg">Reset Admin PIN</h3>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 p-6">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2.5 text-slate-900 font-bold text-base">
+                <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <span>Reset Admin PIN</span>
               </div>
               <button 
+                type="button"
                 onClick={() => setShowForgotPin(false)}
-                className="text-muted hover:text-ink transition-colors"
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
             
-            <div className="p-6">
+            <div>
               {resetSuccess ? (
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-surface-soft border border-hairline text-ink rounded-full flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
+                <div className="text-center py-3">
+                  <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 border border-emerald-200">
+                    <CheckCircle2 className="w-6 h-6" />
                   </div>
-                  <p className="text-ink font-medium">{resetSuccess}</p>
+                  <p className="text-slate-900 font-bold text-sm">{resetSuccess}</p>
+                  <p className="text-xs text-slate-500 mt-1">Default PIN is restored: <strong>1234</strong></p>
                   <button
+                    type="button"
                     onClick={() => {
                       setShowForgotPin(false);
                       setSelectedUsername('Admin');
                       setPin('');
                     }}
-                    className="mt-6 w-full py-2.5 bg-primary text-on-primary font-medium rounded-lg shadow-sm hover:shadow-md hover:bg-primary-active transition-all"
+                    className="mt-5 w-full py-2.5 bg-blue-600 text-white font-bold text-xs rounded-xl shadow-md hover:bg-blue-700 transition-all cursor-pointer"
                   >
                     Back to Login
                   </button>
                 </div>
               ) : (
                 <>
-                  <p className="text-sm text-body mb-5 text-center">
-                    Please contact your vendor to provide the 6-digit reset key to reset the Admin PIN back to <strong>1234</strong>.
+                  <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+                    Contact your vendor to get the 6-digit emergency reset key. This will restore the Admin PIN back to default <strong>1234</strong>.
                   </p>
                   
                   {resetError && (
-                    <div className="mb-4 p-2.5 bg-canvas border border-signature-coral text-signature-coral text-xs text-center font-medium rounded-sm">
+                    <div className="mb-4 p-2.5 bg-red-50 border border-red-200 text-red-700 text-xs text-center font-semibold rounded-xl">
                       {resetError}
                     </div>
                   )}
@@ -209,12 +296,14 @@ export default function Login() {
                     pattern="[0-9]*"
                     maxLength={6}
                     value={resetToken}
-                    onChange={(e) => setResetToken(e.target.value.replace(/\D/g, ''))}
-                    placeholder="123456"
-                    className="w-full text-center text-3xl font-mono tracking-widest p-4 border border-hairline rounded-md shadow-sm focus:outline-none focus:border-primary bg-canvas mb-6 text-ink placeholder-muted"
+                    onChange={(e) => setResetToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="Enter 6-digit key"
+                    style={resetToken ? { letterSpacing: '0.35em', textIndent: '0.35em' } : { letterSpacing: 'normal', textIndent: '0' }}
+                    className="w-full text-center text-3xl font-mono py-3 border-2 border-slate-300 rounded-xl focus:outline-none focus:border-blue-600 bg-slate-50 mb-4 text-slate-900 font-bold placeholder:text-slate-300 placeholder:text-xs placeholder:tracking-normal placeholder:font-normal"
                   />
                   
                   <button
+                    type="button"
                     onClick={async () => {
                       if (resetToken.length !== 6) {
                         setResetError('Please enter a 6-digit code');
@@ -222,8 +311,8 @@ export default function Login() {
                       }
 
                       let totp = new OTPAuth.TOTP({
-                        issuer: "Electro Hub",
-                        label: "Admin",
+                        issuer: "Inventory Software",
+                        label: "License Key",
                         algorithm: "SHA1",
                         digits: 6,
                         period: 30,
@@ -235,7 +324,6 @@ export default function Login() {
                       if (delta !== null) {
                         try {
                           const db = await getDb();
-                          // Force reset Admin PIN to '1234'
                           await db.execute("UPDATE users SET pin = '1234' WHERE role = 'admin' OR username = 'Admin'");
                           setResetSuccess('Admin PIN has been successfully reset to 1234!');
                         } catch(e) {
@@ -247,7 +335,7 @@ export default function Login() {
                       }
                     }}
                     disabled={resetToken.length !== 6}
-                    className="w-full py-3 bg-primary text-on-primary font-medium rounded-lg shadow-sm hover:shadow-md hover:bg-primary-active transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                    className="w-full py-3 bg-blue-600 text-white font-bold text-xs rounded-xl shadow-md hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     Verify & Reset PIN
                   </button>

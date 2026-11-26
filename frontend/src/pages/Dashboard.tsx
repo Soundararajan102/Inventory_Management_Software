@@ -84,8 +84,10 @@ export default function Dashboard() {
   const maxWeeklyAmount = Math.max(...weeklySales.map(d => d.amount), 1);
   const total7DayRevenue = weeklySales.reduce((acc, curr) => acc + curr.amount, 0);
 
-  const formatCurrency = (num: number) =>
-    `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatCurrency = (num: number) => {
+    const abs = Math.abs(num).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return num < 0 ? `-₹${abs}` : `₹${abs}`;
+  };
 
   const currentDateFormatted = new Date().toLocaleDateString('en-IN', {
     weekday: 'short',
@@ -134,26 +136,26 @@ export default function Dashboard() {
       {hasChequesDue && chequesSummary && (
         <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-200">
           <div className="flex items-start sm:items-center gap-3 min-w-0">
-            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-700 shrink-0 mt-0.5 sm:mt-0">
+            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5 sm:mt-0">
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-900">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
                   Cheques Due Action Required
                 </span>
                 {chequesSummary.dueTodayCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-900 border border-amber-500/30">
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-900 dark:text-amber-200 border border-amber-500/30">
                     {chequesSummary.dueTodayCount} Due Today ({formatCurrency(chequesSummary.dueTodayAmount)})
                   </span>
                 )}
                 {chequesSummary.overdueCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-700 border border-red-500/30">
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30">
                     {chequesSummary.overdueCount} Overdue ({formatCurrency(chequesSummary.overdueAmount)})
                   </span>
                 )}
               </div>
-              <p className="text-xs text-amber-900/80 mt-0.5">
+              <p className="text-xs text-amber-900/80 dark:text-amber-200/80 mt-0.5">
                 You have post-dated cheques ready for bank deposit or clearance. Review them to keep your balances updated.
               </p>
             </div>

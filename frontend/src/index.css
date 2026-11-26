@@ -57,7 +57,8 @@ body {
 
 @media print {
   @page {
-    margin: 0 !important;
+    size: A4 portrait;
+    margin: 8mm 10mm;
   }
   
   #root {
@@ -75,5 +76,14 @@ body {
   #printable-report {
     display: block !important;
     width: 100%;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
+}
+
+
+/* Hide Windows Edge / WebView2 native password reveal eye and clear icons */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none !important;
 }

@@ -20,10 +20,10 @@ import {
   Keyboard,
   ArrowRight,
   Check,
-  Edit3,
   ShieldCheck,
   Lock,
-  Layers
+  Layers,
+  CheckCircle2
 } from 'lucide-react';
 import { save, open, confirm } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
@@ -75,7 +75,7 @@ export default function Settings() {
   const [wipeError, setWipeError] = useState('');
 
   const [showCompanyModal, setShowCompanyModal] = useState(false);
-  const activeCompany = getActiveCompany();
+  const [activeCompany, setActiveCompany] = useState<Company>(getActiveCompany);
 
   const auth = useAuth();
   const user = auth?.user;
@@ -85,91 +85,35 @@ export default function Settings() {
   const [companiesList, setCompaniesList] = useState<Company[]>(getCompanies);
   const [showCreateCompanyCard, setShowCreateCompanyCard] = useState(false);
   const [newCompName, setNewCompName] = useState('');
-  const [newCompCode, setNewCompCode] = useState('');
-  const [newCompShopName, setNewCompShopName] = useState('');
-  const [newCompAddress, setNewCompAddress] = useState('');
-  const [newCompPhone, setNewCompPhone] = useState('');
-  const [newCompGSTIN, setNewCompGSTIN] = useState('');
-  const [newCompAdminPin, setNewCompAdminPin] = useState('1234');
   const [isSubmittingComp, setIsSubmittingComp] = useState(false);
-
-  // Edit Company State
-  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
-  const [editCompName, setEditCompName] = useState('');
-  const [editCompCode, setEditCompCode] = useState('');
-  const [editCompShopName, setEditCompShopName] = useState('');
-  const [editCompAddress, setEditCompAddress] = useState('');
-  const [editCompPhone, setEditCompPhone] = useState('');
-  const [editCompGSTIN, setEditCompGSTIN] = useState('');
 
   const refreshCompanies = () => {
     setCompaniesList(getCompanies());
+    setActiveCompany(getActiveCompany());
   };
 
   const handleCreateCompanySubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompName.trim()) {
-      setStatus({ type: 'error', message: 'Please enter a Company / Business Name.' });
+      setStatus({ type: 'error', message: 'Please enter a Company / Shop Name.' });
       return;
     }
     setIsSubmittingComp(true);
     try {
       const created = createCompany({
-        name: newCompName.trim(),
-        code: newCompCode.trim().toUpperCase(),
-        shopName: newCompShopName.trim() || newCompName.trim(),
-        shopAddress: newCompAddress.trim(),
-        shopPhone: newCompPhone.trim(),
-        shopGSTIN: newCompGSTIN.trim().toUpperCase(),
-        adminPin: newCompAdminPin.trim() || '1234'
+        name: newCompName.trim()
       });
       refreshCompanies();
       setNewCompName('');
-      setNewCompCode('');
-      setNewCompShopName('');
-      setNewCompAddress('');
-      setNewCompPhone('');
-      setNewCompGSTIN('');
-      setNewCompAdminPin('1234');
       setShowCreateCompanyCard(false);
       setStatus({
         type: 'success',
-        message: `Company "${created.name}" created successfully with an independent database!`
+        message: `Company "${created.name}" created successfully! Switch to it anytime to configure its details in Store & Branding.`
       });
     } catch (err) {
       setStatus({ type: 'error', message: 'Failed to create company: ' + err });
     } finally {
       setIsSubmittingComp(false);
-    }
-  };
-
-  const handleStartEditCompany = (comp: Company) => {
-    setEditingCompany(comp);
-    setEditCompName(comp.name);
-    setEditCompCode(comp.code || '');
-    setEditCompShopName(comp.shopName || comp.name);
-    setEditCompAddress(comp.shopAddress || '');
-    setEditCompPhone(comp.shopPhone || '');
-    setEditCompGSTIN(comp.shopGSTIN || '');
-  };
-
-  const handleSaveEditCompany = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingCompany || !editCompName.trim()) return;
-    try {
-      updateCompany(editingCompany.id, {
-        name: editCompName.trim(),
-        code: editCompCode.trim().toUpperCase(),
-        shopName: editCompShopName.trim() || editCompName.trim(),
-        shopAddress: editCompAddress.trim(),
-        shopPhone: editCompPhone.trim(),
-        shopGSTIN: editCompGSTIN.trim().toUpperCase()
-      });
-      refreshCompanies();
-      setEditingCompany(null);
-      setStatus({ type: 'success', message: 'Company details updated successfully!' });
-    } catch (err) {
-      setStatus({ type: 'error', message: 'Failed to update company: ' + err });
     }
   };
 
@@ -200,7 +144,12 @@ export default function Settings() {
     setter(finalVal);
     localStorage.setItem(key, finalVal);
     try {
-      updateCompany(activeCompany.id, { [key]: finalVal });
+      if (key === 'shopName') {
+        updateCompany(activeCompany.id, { name: finalVal, shopName: finalVal });
+        refreshCompanies();
+      } else {
+        updateCompany(activeCompany.id, { [key]: finalVal });
+      }
     } catch (e) {}
     window.dispatchEvent(new Event('preferencesUpdated'));
   };
@@ -701,6 +650,24 @@ export default function Settings() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="max-w-4xl mx-auto space-y-6">
 
+            {status && (
+              <div className={`p-4 rounded-xl border flex items-start gap-3 animate-in fade-in duration-200 ${
+                status.type === 'success' 
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300' 
+                  : 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300'
+              }`}>
+                {status.type === 'success' ? (
+                  <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+                )}
+                <div className="flex-1 text-sm font-medium">{status.message}</div>
+                <button onClick={() => setStatus(null)} className="text-muted hover:text-ink p-0.5">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* TAB 1: STORE & BRANDING */}
             {activeTab === 'shop' && (
               <div className="space-y-6 animate-in fade-in duration-150">
@@ -722,7 +689,7 @@ export default function Settings() {
                     </div>
                     <div className="min-w-0">
                       <div className="text-[10.5px] font-bold text-primary uppercase tracking-wider">Active Business Profile</div>
-                      <div className="text-sm font-bold text-ink truncate">{activeCompany.name}</div>
+                      <div className="text-sm font-bold text-ink truncate">{shopName}</div>
                       <div className="text-xs text-muted">Independent database & isolated inventory</div>
                     </div>
                   </div>
@@ -864,7 +831,7 @@ export default function Settings() {
 
                 {/* Create Company Form */}
                 {showCreateCompanyCard && (
-                  <form onSubmit={handleCreateCompanySubmit} className="bg-canvas border-2 border-primary/40 rounded-xl p-6 shadow-sm space-y-5 animate-in fade-in duration-150">
+                  <form onSubmit={handleCreateCompanySubmit} className="bg-canvas border-2 border-primary/40 rounded-xl p-6 shadow-sm space-y-4 animate-in fade-in duration-150">
                     <div className="flex items-center justify-between border-b border-hairline pb-3">
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
@@ -872,7 +839,7 @@ export default function Settings() {
                         </div>
                         <div>
                           <h3 className="text-sm font-bold text-ink">Create New Company / Branch</h3>
-                          <p className="text-xs text-muted">Creates an isolated SQLite database file with fresh inventory and sales</p>
+                          <p className="text-xs text-muted">Creates an independent database file with fresh inventory and sales</p>
                         </div>
                       </div>
                       <button
@@ -885,100 +852,22 @@ export default function Settings() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          Company / Business Name *
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Electro Hub Wholesale / Branch 2"
-                          value={newCompName}
-                          onChange={e => setNewCompName(e.target.value)}
-                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
-                          required
-                          autoFocus
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          Short Code / Prefix (e.g. BR2 / EHW)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. BR2"
-                          value={newCompCode}
-                          onChange={e => setNewCompCode(e.target.value.toUpperCase())}
-                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary uppercase font-mono text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          Shop / Trade Display Name
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Electro Hub Electronics"
-                          value={newCompShopName}
-                          onChange={e => setNewCompShopName(e.target.value)}
-                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          Shop Address (Printed on Invoices)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 45 Station Road, Coimbatore - 641001"
-                          value={newCompAddress}
-                          onChange={e => setNewCompAddress(e.target.value)}
-                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          Phone / Mobile
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. +91 9443210000"
-                          value={newCompPhone}
-                          onChange={e => setNewCompPhone(e.target.value)}
-                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          GSTIN
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 33AAAAA0000A1Z5"
-                          value={newCompGSTIN}
-                          onChange={e => setNewCompGSTIN(e.target.value.toUpperCase())}
-                          className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary uppercase font-mono text-xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink mb-1.5">
-                          Initial Admin PIN (Default 1234)
-                        </label>
-                        <input
-                          type="password"
-                          inputMode="numeric"
-                          placeholder="1234"
-                          value={newCompAdminPin}
-                          onChange={e => setNewCompAdminPin(e.target.value)}
-                          className="w-36 px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary font-mono tracking-widest text-xs"
-                        />
-                      </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink mb-1.5">
+                        Company / Shop Name *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Electro Hub Wholesale / Branch 2"
+                        value={newCompName}
+                        onChange={e => setNewCompName(e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-surface-soft border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs"
+                        required
+                        autoFocus
+                      />
+                      <p className="text-[11px] text-muted mt-2">
+                        All other details (phone, address, GSTIN) can be set anytime under <strong>Store &amp; Branding</strong>.
+                      </p>
                     </div>
 
                     <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-hairline">
@@ -999,109 +888,6 @@ export default function Settings() {
                       </button>
                     </div>
                   </form>
-                )}
-
-                {/* Edit Company Modal / Dialog */}
-                {editingCompany && (
-                  <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
-                    <form onSubmit={handleSaveEditCompany} className="bg-canvas border border-hairline rounded-xl p-6 shadow-2xl max-w-lg w-full space-y-4 animate-in fade-in zoom-in duration-150">
-                      <div className="flex items-center justify-between border-b border-hairline pb-3">
-                        <div className="flex items-center gap-2">
-                          <Edit3 className="w-4 h-4 text-primary" />
-                          <h3 className="text-sm font-bold text-ink">Edit Company Details</h3>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setEditingCompany(null)}
-                          className="text-muted hover:text-ink p-1 rounded-md hover:bg-surface-soft"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <div className="space-y-3 text-xs">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-ink mb-1">Company / Business Name *</label>
-                          <input
-                            type="text"
-                            value={editCompName}
-                            onChange={e => setEditCompName(e.target.value)}
-                            className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
-                            required
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-ink mb-1">Short Code / Tag</label>
-                            <input
-                              type="text"
-                              value={editCompCode}
-                              onChange={e => setEditCompCode(e.target.value.toUpperCase())}
-                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink font-mono uppercase"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold text-ink mb-1">Shop / Trade Name</label>
-                            <input
-                              type="text"
-                              value={editCompShopName}
-                              onChange={e => setEditCompShopName(e.target.value)}
-                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-ink mb-1">Shop Address</label>
-                          <input
-                            type="text"
-                            value={editCompAddress}
-                            onChange={e => setEditCompAddress(e.target.value)}
-                            className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-semibold text-ink mb-1">Phone</label>
-                            <input
-                              type="text"
-                              value={editCompPhone}
-                              onChange={e => setEditCompPhone(e.target.value)}
-                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-semibold text-ink mb-1">GSTIN</label>
-                            <input
-                              type="text"
-                              value={editCompGSTIN}
-                              onChange={e => setEditCompGSTIN(e.target.value.toUpperCase())}
-                              className="w-full px-3 py-2 bg-surface-soft border border-hairline rounded-lg text-ink font-mono uppercase"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-end gap-2 pt-3 border-t border-hairline">
-                        <button
-                          type="button"
-                          onClick={() => setEditingCompany(null)}
-                          className="px-4 py-2 text-xs font-semibold rounded-lg bg-surface-soft hover:bg-surface-strong text-muted hover:text-ink transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary transition-all flex items-center gap-1.5 shadow-2xs"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Save Changes</span>
-                        </button>
-                      </div>
-                    </form>
-                  </div>
                 )}
 
                 {/* Available Companies List */}
@@ -1160,17 +946,6 @@ export default function Settings() {
 
                             {/* Actions */}
                             <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                              {isMasterAdmin && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditCompany(comp)}
-                                  className="p-2 text-muted hover:text-ink hover:bg-surface-strong rounded-lg transition-colors cursor-pointer"
-                                  title="Edit Company Details"
-                                >
-                                  <Edit3 className="w-4 h-4" />
-                                </button>
-                              )}
-
                               {isMasterAdmin && comp.id !== 'comp_default' && (
                                 <button
                                   type="button"
@@ -1182,7 +957,17 @@ export default function Settings() {
                                 </button>
                               )}
 
-                              {!isActive && (
+                              {isActive ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('shop')}
+                                  className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-surface-soft hover:bg-surface-strong text-ink border border-hairline transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                  title="Edit details in Store & Branding tab"
+                                >
+                                  <Store className="w-3.5 h-3.5 text-primary" />
+                                  <span>Edit Store Details</span>
+                                </button>
+                              ) : (
                                 <button
                                   type="button"
                                   onClick={() => switchCompany(comp.id)}
@@ -1717,15 +1502,6 @@ export default function Settings() {
                   </p>
                 </div>
 
-                {status && (
-                  <div className={`p-4 rounded-xl border flex items-start gap-3 ${
-                    status.type === 'success' ? 'bg-success/10 border-success/30 text-success' : 'bg-signature-coral/10 border-signature-coral/30 text-signature-coral'
-                  }`}>
-                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                    <p className="font-medium text-sm">{status.message}</p>
-                  </div>
-                )}
-
                 {/* Backup & Restore Action Grid (Entire Full Backup Only) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Card 1: Entire Full System Backup */}
@@ -1865,7 +1641,7 @@ export default function Settings() {
                       { key: 'Ctrl + 8 / ^8', action: 'Navigate to Godowns', page: 'Warehouses' },
                       { key: 'Ctrl + 9 / ^9', action: 'Navigate to Contacts', page: 'Customers & Suppliers' },
                       { key: 'Ctrl + 0 / ^0', action: 'Navigate to Reports', page: 'PDF & Analytics' },
-                      { key: 'F1', action: 'Focus Barcode Scanner', page: 'POS Checkout' },
+                      { key: 'F1', action: 'Focus Product Search', page: 'POS Checkout' },
                       { key: 'Esc', action: 'Close Popups & Modals', page: 'Universal' },
                     ].map(row => (
                       <div key={row.key} className="px-6 py-3.5 flex items-center justify-between text-sm">

@@ -29,6 +29,10 @@ export interface ReceiptData {
   chequeDate?: string;
   sourceLocationName?: string;
   dispatchDetails?: DispatchDetails;
+  roundOff?: number;
+  taxableAmount?: number;
+  itemDiscountAmount?: number;
+  status?: string;
 }
 
 interface ReceiptProps {
@@ -49,7 +53,8 @@ function numberToWords(num: number): string {
     return convert(Math.floor(n / 10000000)) + 'Crore ' + (n % 10000000 !== 0 ? convert(n % 10000000) : '');
   };
 
-  const str = String(num);
+  const rounded = Math.round(num * 100) / 100;
+  const str = rounded.toFixed(2);
   const parts = str.split('.');
   const rupees = parseInt(parts[0], 10);
   const paise = parts.length > 1 ? parseInt(parts[1].padEnd(2, '0').slice(0, 2), 10) : 0;
@@ -65,11 +70,26 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
   if (!data) return null;
 
   let originalPriceBasis = 0;
+  let totalItemDiscounts = 0;
+  let netPriceBasisAfterItemDiscounts = 0;
+
   data.items.forEach(item => {
-    originalPriceBasis += item.selling_price * item.cart_qty;
+    const lineGross = item.selling_price * item.cart_qty;
+    let discPct = Number(item.discount_percent || 0);
+    if ((discPct <= 0 || discPct > 100) && Number(item.discount || 0) > 0 && lineGross > 0) {
+      discPct = Math.min(100, Math.max(0, Number(((Number(item.discount) / lineGross) * 100).toFixed(2))));
+    } else {
+      discPct = Math.min(100, Math.max(0, discPct));
+    }
+    const lineDiscAmt = (lineGross * discPct) / 100;
+    const lineNet = Math.max(0, lineGross - lineDiscAmt);
+
+    originalPriceBasis += lineGross;
+    totalItemDiscounts += lineDiscAmt;
+    netPriceBasisAfterItemDiscounts += lineNet;
   });
 
-  const discountRatio = originalPriceBasis > 0 ? (data.discount / originalPriceBasis) : 0;
+  const discountRatio = netPriceBasisAfterItemDiscounts > 0 ? (data.discount / netPriceBasisAfterItemDiscounts) : 0;
   
   const taxBreakdown = { cgst: {} as Record<number, number>, sgst: {} as Record<number, number> };
   let totalQty = 0;
@@ -77,13 +97,23 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
   
   const mappedItems = data.items.map(item => {
     totalQty += item.cart_qty;
-    const originalItemPrice = item.selling_price * item.cart_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
+    const lineGross = item.selling_price * item.cart_qty;
+    let discPct = Number(item.discount_percent || 0);
+    if ((discPct <= 0 || discPct > 100) && Number(item.discount || 0) > 0 && lineGross > 0) {
+      discPct = Math.min(100, Math.max(0, Number(((Number(item.discount) / lineGross) * 100).toFixed(2))));
+    } else {
+      discPct = Math.min(100, Math.max(0, discPct));
+    }
+    const lineDiscAmt = (lineGross * discPct) / 100;
+    const lineNet = Math.max(0, lineGross - lineDiscAmt);
+    const discountedItemPrice = lineNet * (1 - discountRatio);
     
     let taxableValue = discountedItemPrice;
-    if (data.taxMethod === 'inclusive') {
+    if ((item as any).taxable_amount !== undefined && (item as any).taxable_amount > 0) {
+      taxableValue = (item as any).taxable_amount;
+    } else if (data.taxMethod === 'inclusive') {
       const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
+      taxableValue = gstPercent > 0 ? (discountedItemPrice / (1 + (gstPercent / 100))) : discountedItemPrice;
     }
     totalTaxableValue += taxableValue;
 
@@ -99,6 +129,9 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
     
     return {
       ...item,
+      discount_percent: discPct,
+      lineGross,
+      lineDiscAmt,
       taxableValue
     };
   });
@@ -109,12 +142,13 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
   Object.values(taxBreakdown.sgst).forEach(v => totalSgst += v);
   
   const mathTotal = totalTaxableValue + totalCgst + totalSgst;
-  const roundOff = data.netAmount - mathTotal;
+  const roundOff = data.roundOff !== undefined ? data.roundOff : (Math.abs(data.netAmount - mathTotal) > 0.005 ? (data.netAmount - mathTotal) : 0);
+  const effectiveTotalTaxable = (data.taxableAmount !== undefined && data.taxableAmount > 0) ? data.taxableAmount : totalTaxableValue;
 
   const shopName = localStorage.getItem('shopName') || 'Electro Hub';
   const shopAddress = localStorage.getItem('shopAddress') || '123 Market Street, City';
   const shopPhone = localStorage.getItem('shopPhone') || '+91 9876543210';
-  const shopGSTIN = (localStorage.getItem('shopGSTIN') || '27XXXXX1234X1X1').toUpperCase();
+  const shopGSTIN = (localStorage.getItem('shopGSTIN') || localStorage.getItem('gstin') || '').toUpperCase();
 
   const disp = data.dispatchDetails || {};
   const hasDispatch = Boolean(
@@ -134,11 +168,13 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
     hsnSummary[hsn].sgstAmount += item.taxableValue * ((item.sgst_percentage || 0) / 100);
   });
 
+  const isLargeBill = mappedItems.length > 7 || Object.keys(hsnSummary).length > 5;
+
   const receiptContent = (
     <div id="printable-receipt" className="hidden print:block bg-white text-black font-sans w-full max-w-4xl mx-auto" style={{ boxSizing: 'border-box' }}>
       <style>
         {`
-          @page { size: A4 portrait; margin: 5mm 6mm; }
+          @page { size: A4 portrait; margin: 4mm 5mm; }
           @media print {
             html, body {
               margin: 0 !important;
@@ -153,18 +189,12 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
               max-width: 100% !important;
               margin: 0 !important;
               padding: 0 !important;
-              page-break-inside: avoid !important;
-              break-inside: avoid !important;
-              page-break-after: avoid !important;
-              break-after: avoid !important;
             }
-            .tally-table { width: 100%; border-collapse: collapse; }
-            .tally-table th, .tally-table td { 
+            .tally-border { 
               border: 1px solid #000; 
-              padding: 2px 4px !important; 
-              line-height: 1.2 !important; 
+              -webkit-box-decoration-break: clone;
+              box-decoration-break: clone;
             }
-            .tally-border { border: 1px solid #000; }
             .tally-border-b { border-bottom: 1px solid #000; }
             .tally-border-r { border-right: 1px solid #000; }
             .tally-border-l { border-left: 1px solid #000; }
@@ -172,29 +202,64 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
             .no-border-top { border-top: none !important; }
             .no-border-bottom { border-bottom: none !important; }
             
+            .tally-table { 
+              width: 100%; 
+              border-collapse: collapse; 
+            }
+            .tally-table thead {
+              display: table-header-group !important;
+            }
+            .tally-table tbody tr {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
+            .tally-table th, .tally-table td { 
+              border: 1px solid #000; 
+              padding: 1.5px 3.5px !important; 
+              line-height: 1.15 !important; 
+            }
+            
             /* Tally-specific borders for item rows */
             .item-row td { border-top: none; border-bottom: none; }
+
+            .invoice-footer-container {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
+
+            .summary-container {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
           }
         `}
       </style>
 
-      <h1 className="text-center text-lg font-bold mb-1">
-        {data.isQuotation ? 'ESTIMATE / QUOTATION' : 'TAX INVOICE'}
+      <h1 className={`text-center font-bold ${isLargeBill ? 'text-base mb-0.5' : 'text-lg mb-1'} ${data.status === 'Returned' ? 'text-red-600' : ''}`}>
+        {data.status === 'Returned' 
+          ? '*** TAX INVOICE — RETURNED / CANCELLED ***' 
+          : (data.isQuotation ? 'ESTIMATE / QUOTATION' : 'TAX INVOICE')}
       </h1>
       
-      <div className="tally-border flex flex-col w-full text-[10.5px] leading-tight">
+      {data.status === 'Returned' && (
+        <div className="mb-2 py-1 px-3 bg-red-100 border border-red-400 text-red-800 text-center font-bold text-xs uppercase tracking-wider">
+          NOTICE: This invoice has been returned / voided. Net amount payable is ₹0.00.
+        </div>
+      )}
+      
+      <div className={`tally-border flex flex-col w-full ${isLargeBill ? 'text-[9.5px]' : 'text-[10.5px]'} leading-tight`}>
         
         {/* Top Section */}
         <div className="flex w-full tally-border-b">
           {/* Left Column */}
           <div className="w-1/2 tally-border-r flex flex-col">
-            <div className="p-1.5 tally-border-b">
-              <div className="font-bold text-sm">{shopName}</div>
+            <div className={`${isLargeBill ? 'p-1' : 'p-1.5'} tally-border-b`}>
+              <div className={`font-bold ${isLargeBill ? 'text-xs' : 'text-sm'}`}>{shopName}</div>
               <div>{shopAddress}</div>
               <div>Mobile no. : {shopPhone}</div>
               <div>GSTIN : {shopGSTIN}</div>
             </div>
-            <div className="p-1.5">
+            <div className={isLargeBill ? 'p-1' : 'p-1.5'}>
               <div>{data.isQuotation ? 'Quotation For' : 'Billed To'}</div>
               <div className="font-bold">{data.customerDetails?.name || data.customerName}</div>
               <div>{data.customerDetails?.address}</div>
@@ -299,7 +364,7 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
         </div>
 
         {/* Items Table */}
-        <table className="tally-table text-[10.5px]">
+        <table className={`tally-table ${isLargeBill ? 'text-[9.5px]' : 'text-[10.5px]'}`}>
           <thead>
             <tr>
               <th className="w-[5%] font-normal">Sr<br/>No.</th>
@@ -315,19 +380,21 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           <tbody>
             {mappedItems.map((item, i) => (
               <tr key={i} className="item-row align-top">
-                <td className="text-center py-0.5">{i + 1}</td>
-                <td className="py-0.5">
+                <td className={`text-center ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{i + 1}</td>
+                <td className={isLargeBill ? 'py-0' : 'py-0.5'}>
                   <div className="font-bold">{item.name}</div>
-                  {item.model && !item.name.includes(item.model) && <div className="text-[9.5px]">Model : {item.model}</div>}
+                  {item.model && !item.name.includes(item.model) && <div className="text-[9px]">Model : {item.model}</div>}
                 </td>
-                <td className="text-center py-0.5">{item.hsn_code}</td>
-                <td className="text-right font-bold py-0.5">{item.cart_qty} <span className="font-normal">{item.unit || 'no'}</span></td>
-                <td className="text-right py-0.5">{item.selling_price.toFixed(2)}</td>
-                <td className="text-center py-0.5">{item.unit || 'no'}</td>
-                <td className="text-right py-0.5">
-                  {discountRatio > 0 ? (discountRatio * 100).toFixed(2) + '%' : ''}
+                <td className={`text-center ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{item.hsn_code}</td>
+                <td className={`text-right font-bold ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{item.cart_qty} <span className="font-normal">{item.unit || 'no'}</span></td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{item.selling_price.toFixed(2)}</td>
+                <td className={`text-center ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{item.unit || 'no'}</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>
+                  {item.discount_percent && item.discount_percent > 0 
+                    ? `${item.discount_percent}%` 
+                    : (discountRatio > 0 ? (discountRatio * 100).toFixed(1) + '%' : '')}
                 </td>
-                <td className="text-right font-bold py-0.5">{item.taxableValue.toFixed(2)}</td>
+                <td className={`text-right font-bold ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{item.taxableValue.toFixed(2)}</td>
               </tr>
             ))}
             
@@ -344,21 +411,21 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
               <td colSpan={3} className="text-right py-1">Total</td>
               <td className="text-right py-1">{totalQty}</td>
               <td colSpan={3} className="text-right py-1 font-semibold text-gray-700">Taxable Subtotal</td>
-              <td className="text-right py-1">{totalTaxableValue.toFixed(2)}</td>
+              <td className="text-right py-1">{effectiveTotalTaxable.toFixed(2)}</td>
             </tr>
           </tbody>
         </table>
 
         {/* Bill Summary Block: Words & Payment on Left, Tax & Grand Total on Right */}
-        <div className="flex w-full tally-border-b border-t-0 text-[10.5px]">
+        <div className={`summary-container flex w-full tally-border-b border-t-0 ${isLargeBill ? 'text-[9.5px]' : 'text-[10.5px]'}`}>
           {/* Left Column: Words and Payment Details */}
-          <div className="w-[55%] tally-border-r p-1.5 flex flex-col justify-between">
+          <div className={`w-[55%] tally-border-r ${isLargeBill ? 'p-1' : 'p-1.5'} flex flex-col justify-between`}>
             <div>
-              <div className="text-gray-600 text-[10px]">Amount Chargeable (in words)</div>
-              <div className="font-bold text-[11px] leading-snug">{numberToWords(Math.round(data.netAmount))}</div>
+              <div className="text-gray-600 text-[9.5px]">Amount Chargeable (in words)</div>
+              <div className="font-bold text-[10.5px] leading-snug">{numberToWords(Math.round(data.netAmount))}</div>
             </div>
             {!data.isQuotation && (
-              <div className="mt-2 text-[10px]">
+              <div className="mt-1 text-[9.5px]">
                 <div>Mode of Payment: <span className="font-bold">{data.paymentMethod || 'Cash'}</span></div>
                 {data.chequeNo && (
                   <div className="font-mono">Chq #{data.chequeNo} {data.bankName ? `(${data.bankName})` : ''}</div>
@@ -369,11 +436,11 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           </div>
 
           {/* Right Column: Tax Breakdown & Invoice Total */}
-          <div className="w-[45%] p-1.5 flex flex-col justify-between">
+          <div className={`w-[45%] ${isLargeBill ? 'p-1' : 'p-1.5'} flex flex-col justify-between`}>
             <div className="space-y-0.5">
               <div className="flex justify-between py-0.5">
                 <span className="text-gray-700">Taxable Value:</span>
-                <span className="font-bold">₹{totalTaxableValue.toFixed(2)}</span>
+                <span className="font-bold">₹{effectiveTotalTaxable.toFixed(2)}</span>
               </div>
               {Object.entries(taxBreakdown.cgst).map(([pct, amt]) => (
                 <div key={'cgst' + pct} className="flex justify-between py-0.5 text-gray-700">
@@ -394,7 +461,7 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
                 </div>
               )}
             </div>
-            <div className="flex justify-between items-center border-t border-black pt-1 mt-1 font-bold text-[11.5px]">
+            <div className="flex justify-between items-center border-t border-black pt-1 mt-1 font-bold text-[11px]">
               <span>Invoice Total:</span>
               <span>₹{data.netAmount.toFixed(2)}</span>
             </div>
@@ -402,7 +469,7 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
         </div>
 
         {/* HSN Summary */}
-        <table className="tally-table text-[10px] border-t-0">
+        <table className={`tally-table ${isLargeBill ? 'text-[9px]' : 'text-[10px]'} border-t-0`}>
           <thead>
             <tr>
               <th rowSpan={2} className="font-normal w-[20%]">HSN/SAC</th>
@@ -421,18 +488,18 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           <tbody>
             {Object.entries(hsnSummary).map(([hsn, sum]) => (
               <tr key={hsn}>
-                <td className="text-center py-0.5">{hsn}</td>
-                <td className="text-right py-0.5">{sum.taxable.toFixed(2)}</td>
-                <td className="text-right py-0.5">{sum.cgstRate}%</td>
-                <td className="text-right py-0.5">{sum.cgstAmount.toFixed(2)}</td>
-                <td className="text-right py-0.5">{sum.sgstRate}%</td>
-                <td className="text-right py-0.5">{sum.sgstAmount.toFixed(2)}</td>
-                <td className="text-right py-0.5">{(sum.cgstAmount + sum.sgstAmount).toFixed(2)}</td>
+                <td className={`text-center ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{hsn}</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{sum.taxable.toFixed(2)}</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{sum.cgstRate}%</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{sum.cgstAmount.toFixed(2)}</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{sum.sgstRate}%</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{sum.sgstAmount.toFixed(2)}</td>
+                <td className={`text-right ${isLargeBill ? 'py-0' : 'py-0.5'}`}>{(sum.cgstAmount + sum.sgstAmount).toFixed(2)}</td>
               </tr>
             ))}
             <tr>
               <td className="text-right font-bold py-0.5">Total</td>
-              <td className="text-right font-bold py-0.5">{totalTaxableValue.toFixed(2)}</td>
+              <td className="text-right font-bold py-0.5">{effectiveTotalTaxable.toFixed(2)}</td>
               <td></td>
               <td className="text-right font-bold py-0.5">{totalCgst.toFixed(2)}</td>
               <td></td>
@@ -442,35 +509,38 @@ export const Receipt: React.FC<ReceiptProps> = ({ data }) => {
           </tbody>
         </table>
 
-        <div className="p-1.5 tally-border-b border-t-0 text-[10.5px]">
-          <div>Tax Amount (in words)</div>
-          <div className="font-bold">{numberToWords(totalCgst + totalSgst)}</div>
-        </div>
+        {/* Footer Container: Tax in words, GSTIN, Declaration & Signatory */}
+        <div className="invoice-footer-container w-full flex flex-col border-t border-black">
+          <div className={`${isLargeBill ? 'p-1' : 'p-1.5'} tally-border-b text-[9.5px]`}>
+            <div className="text-[9px] text-gray-700">Tax Amount (in words)</div>
+            <div className="font-bold text-[10px]">{numberToWords(Math.round((totalCgst + totalSgst) * 100) / 100)}</div>
+          </div>
 
-        <div className="p-1.5 border-t-0 flex text-[10.5px]">
-          <div className="w-1/2">
-            <div>Company's GST No. : <span className="font-bold">{shopGSTIN}</span></div>
-            <div className="mt-1.5">
-              <div className="underline mb-0.5 font-semibold">Declaration</div>
-              {data.isQuotation ? (
-                <div>We declare that this quotation/estimate is valid for 30 days unless revoked and is issued for information purposes.</div>
-              ) : (
-                <>
-                  <div>We declare that this invoice shows the actual price of the goods</div>
-                  <div>described and that all particulars are true and correct</div>
-                </>
-              )}
+          <div className={`${isLargeBill ? 'p-1' : 'p-1.5'} flex text-[9.5px]`}>
+            <div className="w-1/2 pr-2">
+              <div>Company's GST No. : <span className="font-bold">{shopGSTIN || 'N/A'}</span></div>
+              <div className="mt-1">
+                <div className="underline mb-0.5 font-semibold">Declaration</div>
+                {data.isQuotation ? (
+                  <div className="text-[9px] text-gray-700 leading-tight">We declare that this quotation/estimate is valid for 30 days unless revoked and is issued for information purposes.</div>
+                ) : (
+                  <div className="text-[9px] text-gray-700 leading-tight">
+                    We declare that this invoice shows the actual price of the goods
+                    described and that all particulars are true and correct.
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="w-1/2 tally-border-l pl-2 flex flex-col justify-between">
+              <div className="text-right font-bold">for {shopName}</div>
+              <div className={`text-right ${isLargeBill ? 'mt-3' : 'mt-5'} font-semibold`}>Authorised Signatory</div>
             </div>
           </div>
-          <div className="w-1/2 tally-border-l tally-border-t p-1.5 flex flex-col justify-between -m-1.5 ml-1.5">
-            <div className="text-right font-bold">for {shopName}</div>
-            <div className="text-right mt-6">Authorised Signatory</div>
+          
+          <div className="text-center py-0.5 border-t border-gray-300 text-[8.5px] text-gray-600 print:text-[8px]">
+            {data.isQuotation ? 'This is a Computer Generated Quotation / Estimate' : 'This is a Computer Generated Invoice'}
           </div>
         </div>
-      </div>
-      
-      <div className="text-center mt-1 text-[9.5px] text-gray-600">
-        {data.isQuotation ? 'This is a Computer Generated Quotation / Estimate' : 'This is a Computer Generated Invoice'}
       </div>
     </div>
   );

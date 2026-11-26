@@ -204,6 +204,15 @@ export default function Contacts() {
   const [ledgerReportPrintData, setLedgerReportPrintData] = useState<PrintableReportData | null>(null);
 
   useEffect(() => {
+    const handleAfterPrint = () => {
+      setPrintData(null);
+      setLedgerReportPrintData(null);
+    };
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => window.removeEventListener('afterprint', handleAfterPrint);
+  }, []);
+
+  useEffect(() => {
     loadData();
     const closeDropdown = () => setOpenDropdownId(null);
     window.addEventListener('click', closeDropdown);
@@ -531,7 +540,10 @@ export default function Contacts() {
         is_group: false,
         barcode: '',
         model: item.model,
-        hsn_code: item.hsn_code || ''
+        hsn_code: item.hsn_code || '',
+        discount: (item as any).discount || 0,
+        discount_type: (item as any).discount_type || 'percentage',
+        discount_percent: (item as any).discount_percent || 0
       } as any));
 
       const subtotal = (detail.net_amount || 0) - (detail.tax_amount || 0) + (detail.discount || 0);
@@ -544,6 +556,7 @@ export default function Contacts() {
       const isInclusive = taxAmount > 0 ? (diffInclusive < diffExclusive) : (diffInclusive <= 1.0);
       const taxMethod = isInclusive ? 'inclusive' : 'exclusive';
 
+      setLedgerReportPrintData(null);
       setPrintData({
         invoiceNumber: detail.invoice_number || '',
         date: detail.date.split(' ')[0],
@@ -601,6 +614,11 @@ export default function Contacts() {
       };
     });
 
+    const doubleEntryClosingBalance = profileData.ledger.length > 0 
+      ? profileData.ledger[0].balance 
+      : (selectedParty.balance - (selectedParty.advance_balance || 0));
+
+    setPrintData(null);
     setLedgerReportPrintData({
       reportTitle: `${activeTab === 'customers' ? 'CUSTOMER' : 'SUPPLIER'} STATEMENT OF ACCOUNT`,
       partyDetails: {
@@ -609,19 +627,25 @@ export default function Contacts() {
         address: selectedParty.address || undefined,
         gstin: selectedParty.gstin ? selectedParty.gstin.toUpperCase() : undefined,
         type: activeTab === 'customers' ? 'Customer' : 'Supplier',
-        closingBalance: selectedParty.balance
+        closingBalance: doubleEntryClosingBalance
       },
       summaryCards: [
-        { label: 'Total Billed (Dr)', value: `₹${totalDr.toFixed(2)}` },
-        { label: 'Total Paid (Cr)', value: `₹${totalCr.toFixed(2)}` },
+        {
+          label: activeTab === 'customers' ? 'Total Billed (Dr)' : 'Total Purchases / Credited (+)',
+          value: activeTab === 'customers' ? `₹${totalDr.toFixed(2)}` : `₹${totalCr.toFixed(2)}`
+        },
+        {
+          label: activeTab === 'customers' ? 'Total Paid (Cr)' : 'Total Paid / Debited (-)',
+          value: activeTab === 'customers' ? `₹${totalCr.toFixed(2)}` : `₹${totalDr.toFixed(2)}`
+        },
         {
           label: 'Closing Balance',
-          value: Math.abs(selectedParty.balance) < 0.005 
+          value: Math.abs(doubleEntryClosingBalance) < 0.005 
             ? '₹0.00' 
-            : `₹${Math.abs(selectedParty.balance).toFixed(2)} ${
+            : `₹${Math.abs(doubleEntryClosingBalance).toFixed(2)} ${
                 activeTab === 'customers'
-                  ? (selectedParty.balance > 0 ? '(Dr/Due)' : '(Cr/Advance)')
-                  : (selectedParty.balance > 0 ? '(Cr/Payable)' : '(Dr/Advance)')
+                  ? (doubleEntryClosingBalance > 0 ? '(Dr/Due)' : '(Cr/Advance)')
+                  : (doubleEntryClosingBalance > 0 ? '(Cr/Payable)' : '(Dr/Advance)')
               }`,
           highlight: true
         }
@@ -641,12 +665,12 @@ export default function Contacts() {
         description: 'Total',
         formattedDebit: `₹${totalDr.toFixed(2)}`,
         formattedCredit: `₹${totalCr.toFixed(2)}`,
-        formattedBalance: Math.abs(selectedParty.balance) < 0.005
+        formattedBalance: Math.abs(doubleEntryClosingBalance) < 0.005
           ? '₹0.00'
-          : `₹${Math.abs(selectedParty.balance).toFixed(2)} ${
+          : `₹${Math.abs(doubleEntryClosingBalance).toFixed(2)} ${
               activeTab === 'customers' 
-                ? (selectedParty.balance > 0 ? '(Dr)' : '(Cr)') 
-                : (selectedParty.balance > 0 ? '(Cr)' : '(Dr)')
+                ? (doubleEntryClosingBalance > 0 ? '(Dr)' : '(Cr)') 
+                : (doubleEntryClosingBalance > 0 ? '(Cr)' : '(Dr)')
             }`
       }
     });
@@ -679,12 +703,12 @@ export default function Contacts() {
 
   // Filter bills in profile view
   const profileBills = (profileData?.bills || []).filter(bill => {
-    if (billFilter === 'due') return bill.due_amount > 0;
-    if (billFilter === 'paid') return bill.due_amount <= 0;
+    if (billFilter === 'due') return bill.due_amount > 0 && bill.status !== 'Returned';
+    if (billFilter === 'paid') return bill.due_amount <= 0 && bill.status !== 'Returned';
     return true;
   });
-  const dueBillsCount = (profileData?.bills || []).filter(b => b.due_amount > 0).length;
-  const paidBillsCount = (profileData?.bills || []).filter(b => b.due_amount <= 0).length;
+  const dueBillsCount = (profileData?.bills || []).filter(b => b.due_amount > 0 && b.status !== 'Returned').length;
+  const paidBillsCount = (profileData?.bills || []).filter(b => b.due_amount <= 0 && b.status !== 'Returned').length;
 
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -699,7 +723,7 @@ export default function Contacts() {
       const bVal = b.invoice_number || String(b.id);
       cmp = collator.compare(aVal, bVal);
     } else if (billSortField === 'entity_name') {
-      cmp = collator.compare(selectedParty?.name || '', selectedParty?.name || '');
+      cmp = collator.compare(a.invoice_number || '', b.invoice_number || '');
     } else if (billSortField === 'total_quantity') {
       cmp = (a.total_quantity || a.item_count || 0) - (b.total_quantity || b.item_count || 0);
     } else if (billSortField === 'taxable_amount') {
@@ -1025,21 +1049,19 @@ export default function Contacts() {
                           {activeTab === 'customers' ? (
                             <>
                               {renderBillSortHeader('Bill No', 'invoice_number')}
-                              {renderBillSortHeader('Customer', 'entity_name')}
+                              <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider">Customer</th>
                             </>
                           ) : (
                             <>
-                              {renderBillSortHeader('Supplier', 'entity_name')}
                               {renderBillSortHeader('Invoice #', 'invoice_number')}
+                              <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider">Supplier</th>
                             </>
                           )}
                           <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider min-w-[240px]">
                             Products Bought
                           </th>
                           {renderBillSortHeader('Total Qty', 'total_quantity', 'center')}
-                          <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-right whitespace-nowrap">
-                            Taxable (₹)
-                          </th>
+                          {renderBillSortHeader('Taxable (₹)', 'taxable_amount', 'right')}
                           {renderBillSortHeader('Tax (₹)', 'tax_amount', 'right')}
                           {renderBillSortHeader('Net Amount (₹)', 'net_amount', 'right')}
                           {renderBillSortHeader('Days', 'days_elapsed', 'center')}
@@ -1107,6 +1129,8 @@ export default function Contacts() {
                                             className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
                                               bill.status === 'Returned'
                                                 ? 'bg-red-100 text-red-700'
+                                                : bill.status === 'Partially Returned'
+                                                ? 'bg-amber-100 text-amber-700 border border-amber-300'
                                                 : 'bg-amber-100 text-amber-700'
                                             }`}
                                           >
@@ -1123,27 +1147,6 @@ export default function Contacts() {
                                   </>
                                 ) : (
                                   <>
-                                    <td className="px-4 py-2.5 font-medium text-ink whitespace-nowrap">
-                                      <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span>{selectedParty.name}</span>
-                                        {bill.status && bill.status !== 'Paid' && (
-                                          <span
-                                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
-                                              bill.status === 'Returned'
-                                                ? 'bg-red-100 text-red-700'
-                                                : 'bg-amber-100 text-amber-700'
-                                            }`}
-                                          >
-                                            {bill.status}
-                                          </span>
-                                        )}
-                                        {bill.due_amount > 0 && (
-                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200">
-                                            Due: ₹{bill.due_amount.toFixed(2)}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </td>
                                     <td className="px-4 py-2.5 font-medium whitespace-nowrap">
                                       <button
                                         type="button"
@@ -1162,6 +1165,29 @@ export default function Contacts() {
                                       >
                                         {bill.invoice_number || bill.id}
                                       </button>
+                                    </td>
+                                    <td className="px-4 py-2.5 font-medium text-ink whitespace-nowrap">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span>{selectedParty.name}</span>
+                                        {bill.status && bill.status !== 'Paid' && (
+                                          <span
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                              bill.status === 'Returned'
+                                                ? 'bg-red-100 text-red-700'
+                                                : bill.status === 'Partially Returned'
+                                                ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                                : 'bg-amber-100 text-amber-700'
+                                            }`}
+                                          >
+                                            {bill.status}
+                                          </span>
+                                        )}
+                                        {bill.due_amount > 0 && (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200">
+                                            Due: ₹{bill.due_amount.toFixed(2)}
+                                          </span>
+                                        )}
+                                      </div>
                                     </td>
                                   </>
                                 )}
@@ -1212,7 +1238,18 @@ export default function Contacts() {
 
                                 {/* 5. Total Qty */}
                                 <td className="px-4 py-2.5 text-center font-bold text-ink whitespace-nowrap">
-                                  {bill.total_quantity || bill.item_count || 0}
+                                  {bill.status === 'Returned' ? (
+                                    <span className="text-red-600 font-semibold" title={`Original Qty: ${bill.total_quantity || bill.item_count || 0} (Fully Returned)`}>
+                                      0 <span className="text-[10px] text-muted font-normal">({bill.total_quantity || bill.item_count || 0} ret)</span>
+                                    </span>
+                                  ) : bill.total_returned_qty && bill.total_returned_qty > 0 ? (
+                                    <span className="font-bold text-ink" title={`Original Qty: ${bill.total_quantity || bill.item_count || 0} (${bill.total_returned_qty} returned)`}>
+                                      {Math.max(0, (bill.total_quantity || bill.item_count || 0) - bill.total_returned_qty)}{' '}
+                                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">({bill.total_returned_qty} ret)</span>
+                                    </span>
+                                  ) : (
+                                    bill.total_quantity || bill.item_count || 0
+                                  )}
                                 </td>
 
                                 {/* 6. Taxable (₹) */}
@@ -1239,18 +1276,28 @@ export default function Contacts() {
                                 <td className="px-4 py-2.5 text-center whitespace-nowrap">
                                   {(() => {
                                     const days = getDaysElapsed(bill.date);
+                                    const isReturned = bill.status === 'Returned';
+                                    const hasDue = (bill.due_amount || 0) > 0.009 && bill.status !== 'Paid' && !isReturned;
                                     return (
                                       <span
                                         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold font-mono ${
-                                          days === 0
+                                          !hasDue
+                                            ? 'bg-surface-soft text-muted border border-hairline'
+                                            : days === 0
                                             ? 'bg-primary/10 text-primary'
-                                            : days <= 2
-                                            ? 'bg-surface-soft text-ink border border-hairline'
                                             : days <= 15
                                             ? 'bg-surface-soft text-ink border border-hairline'
-                                            : 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+                                            : days <= 30
+                                            ? 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+                                            : 'bg-red-500/10 text-red-700 border border-red-500/20'
                                         }`}
-                                        title={`Bill date: ${bill.date} (${days} ${days === 1 ? 'day' : 'days'} elapsed)`}
+                                        title={
+                                          hasDue
+                                            ? `Bill date: ${bill.date} (${days} ${days === 1 ? 'day' : 'days'} elapsed - Pending Due: ₹${bill.due_amount.toFixed(2)})`
+                                            : isReturned
+                                            ? `Bill date: ${bill.date} - Returned`
+                                            : `Bill date: ${bill.date} (${days} ${days === 1 ? 'day' : 'days'} elapsed - Fully Paid)`
+                                        }
                                       >
                                         {days === 0 ? 'Today' : `${days} ${days === 1 ? 'day' : 'days'}`}
                                       </span>
@@ -1315,29 +1362,39 @@ export default function Contacts() {
                                           className="absolute right-0 top-6 w-36 bg-canvas border border-hairline rounded-lg shadow-lg py-1 z-20 animate-fade-in-up"
                                           onClick={(e) => e.stopPropagation()}
                                         >
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setOpenDropdownId(null);
-                                              navigate(
-                                                activeTab === 'customers'
-                                                  ? `/pos?editId=${bill.id}`
-                                                  : `/purchases?editId=${bill.id}`,
-                                                {
-                                                  state: {
-                                                    from: 'contacts',
-                                                    partyId: selectedParty.id,
-                                                    partyType: activeTab,
-                                                    partyName: selectedParty.name
+                                          {bill.status === 'Returned' ? (
+                                            <div 
+                                              className="w-full text-left px-3 py-1.5 text-xs text-muted flex items-center gap-2 cursor-not-allowed select-none opacity-60" 
+                                              title="Returned bills cannot be edited"
+                                            >
+                                              <Pencil className="w-3.5 h-3.5 text-muted/50" />
+                                              <span className="line-through">Edit Bill</span>
+                                            </div>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setOpenDropdownId(null);
+                                                navigate(
+                                                  activeTab === 'customers'
+                                                    ? `/pos?editId=${bill.id}`
+                                                    : `/purchases?editId=${bill.id}`,
+                                                  {
+                                                    state: {
+                                                      from: 'contacts',
+                                                      partyId: selectedParty.id,
+                                                      partyType: activeTab,
+                                                      partyName: selectedParty.name
+                                                    }
                                                   }
-                                                }
-                                              );
-                                            }}
-                                            className="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-surface-soft flex items-center gap-2 cursor-pointer"
-                                          >
-                                            <Pencil className="w-3.5 h-3.5 text-primary" />
-                                            Edit Bill
-                                          </button>
+                                                );
+                                              }}
+                                              className="w-full text-left px-3 py-1.5 text-xs text-ink hover:bg-surface-soft flex items-center gap-2 cursor-pointer"
+                                            >
+                                              <Pencil className="w-3.5 h-3.5 text-primary" />
+                                              Edit Bill
+                                            </button>
+                                          )}
 
                                           {bill.due_amount > 0 && (
                                             <button
@@ -1487,7 +1544,7 @@ export default function Contacts() {
                                         : 'bg-blue-500/10 text-blue-700'
                                     }`}
                                   >
-                                    {chq.entity_type === 'customer' ? '↓ Deposit' : '↑ Clear'}
+                                    {chq.entity_type === 'customer' ? '↓ Received' : '↑ Issued'}
                                   </span>
                                 </td>
 
@@ -2316,7 +2373,7 @@ export default function Contacts() {
                     }`}
                   >
                     <Plus className="w-4 h-4" />
-                    <span>2. Receive Advance</span>
+                    <span>{activeTab === 'customers' ? '2. Receive Advance' : '2. Pay Advance'}</span>
                     {availableAdvance > 0 && (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold ml-1">
                         ₹{availableAdvance.toFixed(0)}
@@ -2471,7 +2528,7 @@ export default function Contacts() {
                         <div>
                           <div className="flex items-center justify-between mb-1.5">
                             <label className="block text-xs font-semibold text-muted uppercase tracking-wider">
-                              Amount Received (₹) *
+                              {activeTab === 'customers' ? 'Amount Received (₹) *' : 'Amount Paid (₹) *'}
                             </label>
                             {totalBillsDue > 0 && (
                               <button
@@ -2620,7 +2677,7 @@ export default function Contacts() {
                         <div>
                           <span className="text-xs text-muted font-medium block">Current Stored Advance Balance</span>
                           <span className="text-[11px] text-muted/70">
-                            Money received here is stored as advance credit to clear future bills.
+                            Money {activeTab === 'customers' ? 'received' : 'paid'} here is stored as advance credit to clear future {activeTab === 'customers' ? 'bills' : 'purchases'}.
                           </span>
                         </div>
                         <span className="text-lg font-bold font-display text-emerald-600">
@@ -2655,7 +2712,7 @@ export default function Contacts() {
                               <button
                                 key={val}
                                 type="button"
-                                onClick={() => setPaymentAmount(val)}
+                                onClick={() => setPaymentAmount(prev => (typeof prev === 'number' && !isNaN(prev) ? prev : 0) + val)}
                                 className="flex-1 py-1 px-1 rounded-lg text-xs bg-surface-soft hover:bg-surface-soft/80 border border-hairline text-ink font-semibold transition-colors text-center"
                               >
                                 +₹{val}

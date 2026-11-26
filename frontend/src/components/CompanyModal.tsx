@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Building2, Plus, Check, Trash2, Edit3, X, ArrowRight } from 'lucide-react';
+import { Building2, Plus, Check, Trash2, X, ArrowRight } from 'lucide-react';
 import { 
   getCompanies, 
   getActiveCompany, 
   createCompany, 
-  updateCompany, 
   deleteCompany, 
   switchCompany, 
   type Company 
@@ -25,22 +24,26 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
   const activeCompany = getActiveCompany();
 
   // The Main Account (default company admin) is the only account with full
-  // management privileges (create, edit, delete companies).
+  // management privileges (create, delete companies).
   // On the Login page (isReadOnly = true), it is strictly Switch-Only.
   const isMasterAdmin = !isReadOnly && Boolean(user && user.role === 'admin' && activeCompany.id === 'comp_default');
 
-  const [viewMode, setViewMode] = useState<'list' | 'create' | 'edit'>('list');
-  const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'create'>('list');
 
   // Form states
   const [formName, setFormName] = useState('');
-  const [formCode, setFormCode] = useState('');
-  const [formShopName, setFormShopName] = useState('');
-  const [formAddress, setFormAddress] = useState('');
-  const [formPhone, setFormPhone] = useState('');
-  const [formGSTIN, setFormGSTIN] = useState('');
-  const [formAdminPin, setFormAdminPin] = useState('1234');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -51,43 +54,19 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
   function openCreateForm() {
     if (!isMasterAdmin) return;
     setFormName('');
-    setFormCode('');
-    setFormShopName('');
-    setFormAddress('');
-    setFormPhone('');
-    setFormGSTIN('');
-    setFormAdminPin('1234');
     setViewMode('create');
-  }
-
-  function openEditForm(comp: Company) {
-    if (!isMasterAdmin) return;
-    setEditingCompanyId(comp.id);
-    setFormName(comp.name);
-    setFormCode(comp.code || '');
-    setFormShopName(comp.shopName || comp.name);
-    setFormAddress(comp.shopAddress || '');
-    setFormPhone(comp.shopPhone || '');
-    setFormGSTIN(comp.shopGSTIN || '');
-    setViewMode('edit');
   }
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!formName.trim()) {
-      alert('Please enter a Company / Business Name.');
+      alert('Please enter a Company / Shop Name.');
       return;
     }
     setIsSubmitting(true);
     try {
       const newComp = createCompany({
-        name: formName,
-        code: formCode,
-        shopName: formShopName || formName,
-        shopAddress: formAddress,
-        shopPhone: formPhone,
-        shopGSTIN: formGSTIN,
-        adminPin: formAdminPin
+        name: formName.trim()
       });
       refreshList();
       // Automatically switch to the newly created company
@@ -95,30 +74,6 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
     } catch (e) {
       console.error(e);
       alert('Error creating company: ' + e);
-      setIsSubmitting(false);
-    }
-  }
-
-  function handleUpdate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingCompanyId || !formName.trim()) return;
-    setIsSubmitting(true);
-    try {
-      updateCompany(editingCompanyId, {
-        name: formName.trim(),
-        code: formCode.trim().toUpperCase(),
-        shopName: formShopName.trim() || formName.trim(),
-        shopAddress: formAddress.trim(),
-        shopPhone: formPhone.trim(),
-        shopGSTIN: formGSTIN.trim().toUpperCase()
-      });
-      refreshList();
-      setViewMode('list');
-      setEditingCompanyId(null);
-    } catch (e) {
-      console.error(e);
-      alert('Error updating company: ' + e);
-    } finally {
       setIsSubmitting(false);
     }
   }
@@ -143,15 +98,17 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
 
   return createPortal(
     <div 
-      className="fixed inset-0 bg-ink/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
-      onKeyDown={e => {
-        if (e.key === 'Escape') {
-          e.stopPropagation();
+      className="fixed inset-0 bg-ink/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4 cursor-pointer"
+      onClick={e => {
+        if (e.target === e.currentTarget) {
           onClose();
         }
       }}
     >
-      <div className="bg-canvas rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-hairline animate-in fade-in zoom-in duration-150 flex flex-col max-h-[90vh]">
+      <div 
+        className="bg-canvas rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-hairline animate-in fade-in zoom-in duration-150 flex flex-col max-h-[90vh] cursor-default"
+        onClick={e => e.stopPropagation()}
+      >
         
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-hairline flex justify-between items-center bg-surface-soft shrink-0">
@@ -163,7 +120,6 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
               <h2 className="text-sm font-bold text-ink">
                 {viewMode === 'list' && 'Switch Business / Company'}
                 {viewMode === 'create' && 'Create New Company / Branch'}
-                {viewMode === 'edit' && 'Edit Company Details'}
               </h2>
             </div>
           </div>
@@ -222,17 +178,6 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
 
                         {/* Actions & Status Pill */}
                         <div className="flex items-center gap-1.5 shrink-0">
-                          {isMasterAdmin && (
-                            <button
-                              type="button"
-                              onClick={() => openEditForm(comp)}
-                              className="p-1.5 text-muted hover:text-ink hover:bg-surface-strong rounded-md transition-colors cursor-pointer"
-                              title="Edit Details"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          
                           {isMasterAdmin && comp.id !== 'comp_default' && (
                             <button
                               type="button"
@@ -267,11 +212,11 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
             </div>
           )}
 
-          {(viewMode === 'create' || viewMode === 'edit') && (
-            <form onSubmit={viewMode === 'create' ? handleCreate : handleUpdate} className="space-y-4 text-xs">
+          {viewMode === 'create' && (
+            <form onSubmit={handleCreate} className="space-y-4 text-xs">
               <div>
                 <label className="text-[11px] font-semibold text-ink block mb-1">
-                  Company / Business Name *
+                  Company / Shop Name *
                 </label>
                 <input
                   type="text"
@@ -282,104 +227,16 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
                   required
                   autoFocus
                 />
+                <p className="text-[11px] text-muted mt-2">
+                  Once created, you can set the store address, phone, and GSTIN under <strong>Store &amp; Branding</strong>.
+                </p>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-ink block mb-1">
-                    Short Tag / Code (for Bill Prefix)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. EHW / BR2"
-                    value={formCode}
-                    onChange={e => setFormCode(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary uppercase font-mono text-xs shadow-2xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-ink block mb-1">
-                    Shop / Trade Display Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Electro Hub Electronics"
-                    value={formShopName}
-                    onChange={e => setFormShopName(e.target.value)}
-                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-ink block mb-1">
-                  Shop Address (Printed on Invoices)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. 45 Station Road, Coimbatore - 641001"
-                  value={formAddress}
-                  onChange={e => setFormAddress(e.target.value)}
-                  className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-ink block mb-1">
-                    Phone / Mobile
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. +91 9443210000"
-                    value={formPhone}
-                    onChange={e => setFormPhone(e.target.value)}
-                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary text-xs shadow-2xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-ink block mb-1">
-                    GSTIN
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 33AAAAA0000A1Z5"
-                    value={formGSTIN}
-                    onChange={e => setFormGSTIN(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary uppercase font-mono text-xs shadow-2xs"
-                  />
-                </div>
-              </div>
-
-              {viewMode === 'create' && (
-                <div className="pt-2 border-t border-hairline">
-                  <label className="text-[11px] font-semibold text-ink block mb-1">
-                    Initial Admin PIN (for login into this company)
-                  </label>
-                  <input
-                    type="password"
-                    inputMode="numeric"
-                    placeholder="1234"
-                    value={formAdminPin}
-                    onChange={e => setFormAdminPin(e.target.value)}
-                    className="w-32 px-3 py-2 bg-canvas border border-hairline rounded-lg text-ink placeholder:text-muted focus:outline-none focus:border-primary font-mono tracking-widest text-xs shadow-2xs"
-                  />
-                  <p className="text-[10px] text-muted mt-1">
-                    Default is 1234. You can change this anytime in Settings &gt; Staff.
-                  </p>
-                </div>
-              )}
 
               {/* Form Buttons */}
               <div className="pt-3 border-t border-hairline flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => {
-                    setViewMode('list');
-                    setEditingCompanyId(null);
-                  }}
+                  onClick={() => setViewMode('list')}
                   className="px-3 py-1.5 text-xs font-medium text-muted hover:text-ink transition-colors cursor-pointer"
                 >
                   Cancel
@@ -391,13 +248,7 @@ export function CompanyModal({ isOpen, onClose, isReadOnly = false }: CompanyMod
                   className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-active text-on-primary transition-all shadow-sm cursor-pointer flex items-center gap-1.5 active:scale-[0.98]"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  <span>
-                    {isSubmitting
-                      ? 'Saving...'
-                      : viewMode === 'create'
-                      ? 'Create & Switch to Business'
-                      : 'Save Changes'}
-                  </span>
+                  <span>{isSubmitting ? 'Creating Company...' : 'Create & Switch to Business'}</span>
                 </button>
               </div>
             </form>

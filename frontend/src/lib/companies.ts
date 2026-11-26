@@ -43,7 +43,7 @@ export function getDefaultCompany(): Company {
   const currentShopName = localStorage.getItem('shopName') || 'Electro Hub';
   return {
     id: 'comp_default',
-    name: `${currentShopName} (Main)`,
+    name: currentShopName,
     dbFile: 'sqlite:inventory.db',
     code: 'MAIN',
     shopName: currentShopName,
@@ -68,7 +68,27 @@ export function getCompanies(): Company[] {
       localStorage.setItem(COMPANIES_KEY, JSON.stringify([def]));
       return [def];
     }
-    return list;
+    // Automatically sanitize and unify name & shopName, removing any lingering "(Main)" suffix
+    let changed = false;
+    const sanitized = list.map(c => {
+      let cleanName = (c.name || '').replace(/\s*\(Main\)$/i, '').trim();
+      let cleanShop = (c.shopName || '').replace(/\s*\(Main\)$/i, '').trim();
+      const unifiedName = cleanName || cleanShop || 'Electro Hub';
+      if (c.name !== unifiedName || c.shopName !== unifiedName) {
+        changed = true;
+        return {
+          ...c,
+          name: unifiedName,
+          shopName: unifiedName
+        };
+      }
+      return c;
+    });
+
+    if (changed) {
+      localStorage.setItem(COMPANIES_KEY, JSON.stringify(sanitized));
+    }
+    return sanitized;
   } catch (e) {
     console.error('Failed to parse companies list:', e);
     return [getDefaultCompany()];
@@ -79,12 +99,27 @@ export function getActiveCompany(): Company {
   const companies = getCompanies();
   const activeId = localStorage.getItem(ACTIVE_COMPANY_KEY);
   const found = companies.find(c => c.id === activeId);
-  if (found) return found;
-  
-  // Default to first company
-  const fallback = companies[0] || getDefaultCompany();
-  localStorage.setItem(ACTIVE_COMPANY_KEY, fallback.id);
-  return fallback;
+  const active = found || companies[0] || getDefaultCompany();
+  if (!found) {
+    localStorage.setItem(ACTIVE_COMPANY_KEY, active.id);
+  }
+  // Ensure top-level localStorage store info always stays in sync with active company
+  if (active) {
+    if (active.name && localStorage.getItem('shopName') !== active.name) {
+      localStorage.setItem('shopName', active.name);
+    }
+    if (active.shopAddress && localStorage.getItem('shopAddress') !== active.shopAddress) {
+      localStorage.setItem('shopAddress', active.shopAddress);
+    }
+    if (active.shopPhone && localStorage.getItem('shopPhone') !== active.shopPhone) {
+      localStorage.setItem('shopPhone', active.shopPhone);
+    }
+    if (active.shopGSTIN && localStorage.getItem('shopGSTIN') !== active.shopGSTIN) {
+      localStorage.setItem('shopGSTIN', active.shopGSTIN);
+      localStorage.setItem('gstin', active.shopGSTIN);
+    }
+  }
+  return active;
 }
 
 export function getActiveCompanyDbName(): string {
@@ -115,12 +150,50 @@ export function getDefaultCompanySettings(): Record<string, string> {
 }
 
 export function getCompanySettings(companyId: string): Record<string, string> {
+  const companies = getCompanies();
+  const comp = companies.find(c => c.id === companyId);
+  const compName = comp ? comp.name : (companyId === 'comp_default' ? 'Electro Hub' : '');
+  const compAddress = comp ? (comp.shopAddress || '') : '';
+  const compPhone = comp ? (comp.shopPhone || '') : '';
+  const compGSTIN = comp ? (comp.shopGSTIN || '') : '';
+
   try {
     const raw = localStorage.getItem(`${SETTINGS_PREFIX}${companyId}`);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (comp) {
+        if (comp.name) parsed.shopName = comp.name;
+        if (comp.shopAddress) parsed.shopAddress = comp.shopAddress;
+        if (comp.shopPhone) parsed.shopPhone = comp.shopPhone;
+        if (comp.shopGSTIN) {
+          parsed.shopGSTIN = comp.shopGSTIN;
+          parsed.gstin = comp.shopGSTIN;
+        }
+      }
+      return parsed;
     }
   } catch (e) {}
+
+  if (comp) {
+    return {
+      shopName: compName,
+      shopAddress: compAddress,
+      shopPhone: compPhone,
+      shopGSTIN: compGSTIN,
+      gstin: compGSTIN,
+      billPrefix: '',
+      billQuotationPrefix: 'QT',
+      billYearFormat: '2digit',
+      billSeparator: '-',
+      billPadding: '0',
+      enableSalesGST: 'true',
+      salesTaxMethod: 'exclusive',
+      enablePurchaseGST: 'true',
+      purchaseTaxMethod: 'exclusive',
+      lowStockThreshold: '10',
+      profitTaxMode: 'with_gst'
+    };
+  }
 
   if (companyId === 'comp_default') {
     return getDefaultCompanySettings();
@@ -148,9 +221,8 @@ export function createCompany(data: {
   const companies = getCompanies();
   const id = `comp_${Date.now()}`;
   const dbFile = `sqlite:inventory_${id}.db`;
-  const cleanName = data.name.trim();
+  const cleanName = (data.name || data.shopName || '').replace(/\s*\(Main\)$/i, '').trim();
   const cleanCode = (data.code?.trim() || cleanName.substring(0, 4)).toUpperCase();
-  const cleanShopName = data.shopName?.trim() || cleanName;
   const cleanAddress = data.shopAddress?.trim() || '';
   const cleanPhone = data.shopPhone?.trim() || '';
   const cleanGSTIN = (data.shopGSTIN?.trim() || '').toUpperCase();
@@ -161,7 +233,7 @@ export function createCompany(data: {
     name: cleanName,
     dbFile,
     code: cleanCode,
-    shopName: cleanShopName,
+    shopName: cleanName,
     shopAddress: cleanAddress,
     shopPhone: cleanPhone,
     shopGSTIN: cleanGSTIN,
@@ -171,7 +243,7 @@ export function createCompany(data: {
 
   // Seed default settings for the new company (leave bill format to clean defaults)
   const newSettings: Record<string, string> = {
-    shopName: cleanShopName,
+    shopName: cleanName,
     shopAddress: cleanAddress,
     shopPhone: cleanPhone,
     shopGSTIN: cleanGSTIN,
@@ -197,21 +269,45 @@ export function createCompany(data: {
 
 export function updateCompany(companyId: string, updates: Partial<Company>): void {
   const companies = getCompanies();
+  // Ensure name and shopName are always kept unified with no (Main) suffix
+  const newName = (updates.name !== undefined ? updates.name : updates.shopName)?.replace(/\s*\(Main\)$/i, '').trim();
+  const normalizedUpdates: Partial<Company> = { ...updates };
+  if (newName !== undefined) {
+    normalizedUpdates.name = newName;
+    normalizedUpdates.shopName = newName;
+  }
+
   const updated = companies.map(c => {
     if (c.id === companyId) {
-      return { ...c, ...updates };
+      return { ...c, ...normalizedUpdates };
     }
     return c;
   });
   localStorage.setItem(COMPANIES_KEY, JSON.stringify(updated));
 
+  // Also update in company settings map if exists
+  try {
+    const raw = localStorage.getItem(`${SETTINGS_PREFIX}${companyId}`);
+    const settings = raw ? JSON.parse(raw) : {};
+    if (newName !== undefined) settings.shopName = newName;
+    if (updates.shopAddress !== undefined) settings.shopAddress = updates.shopAddress;
+    if (updates.shopPhone !== undefined) settings.shopPhone = updates.shopPhone;
+    if (updates.shopGSTIN !== undefined) {
+      settings.shopGSTIN = updates.shopGSTIN;
+      settings.gstin = updates.shopGSTIN;
+    }
+    saveCompanySettings(companyId, settings);
+  } catch (e) {}
+
   // If updating the active company, sync local storage values
   const active = getActiveCompany();
   if (active.id === companyId) {
-    if (updates.shopName) localStorage.setItem('shopName', updates.shopName);
-    if (updates.shopAddress) localStorage.setItem('shopAddress', updates.shopAddress);
-    if (updates.shopPhone) localStorage.setItem('shopPhone', updates.shopPhone);
-    if (updates.shopGSTIN) {
+    if (newName) {
+      localStorage.setItem('shopName', newName);
+    }
+    if (updates.shopAddress !== undefined) localStorage.setItem('shopAddress', updates.shopAddress);
+    if (updates.shopPhone !== undefined) localStorage.setItem('shopPhone', updates.shopPhone);
+    if (updates.shopGSTIN !== undefined) {
       localStorage.setItem('shopGSTIN', updates.shopGSTIN);
       localStorage.setItem('gstin', updates.shopGSTIN);
     }
@@ -287,6 +383,17 @@ export function switchCompany(targetId: string): void {
       localStorage.setItem(k, v);
     });
   }
+  const allComps = getCompanies();
+  const targetComp = allComps.find(c => c.id === targetId);
+  if (targetComp) {
+    if (targetComp.name) localStorage.setItem('shopName', targetComp.name);
+    if (targetComp.shopAddress) localStorage.setItem('shopAddress', targetComp.shopAddress);
+    if (targetComp.shopPhone) localStorage.setItem('shopPhone', targetComp.shopPhone);
+    if (targetComp.shopGSTIN) {
+      localStorage.setItem('shopGSTIN', targetComp.shopGSTIN);
+      localStorage.setItem('gstin', targetComp.shopGSTIN);
+    }
+  }
 
   // 5. Make sure no leftover contaminated prefix persists
   sanitizeBillFormatDefaults();
@@ -299,6 +406,23 @@ export function switchCompany(targetId: string): void {
 
   // 8. Force full page reload with cache-busting query parameter so all stores & DB connection refresh
   window.location.href = `/?comp=${targetId}&t=${Date.now()}`;
+}
+
+// Automatically sync active company's live settings from localStorage to its scoped settings store
+export function syncActiveCompanySettings(): void {
+  const active = getActiveCompany();
+  const liveSettings: Record<string, string> = {};
+  COMPANY_SETTINGS_KEYS.forEach(k => {
+    const v = localStorage.getItem(k);
+    if (v !== null) liveSettings[k] = v;
+  });
+  saveCompanySettings(active.id, liveSettings);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('preferencesUpdated', () => {
+    syncActiveCompanySettings();
+  });
 }
 
 export interface FullBackupMetadata {

@@ -1,18 +1,60 @@
+# Dependencies & Build Artefacts
 node_modules/
 dist/
 dist-ssr/
 *.local
-
-# Tauri / Rust backend
 backend/target/
+
+# Secret Offline Vendor License Generators & Key QR Codes
+Vendor_License_Keys.html
+*license*keys*.html
+*license*key*.html
+*license_qr*.png
+*trial_key*.png
+*full_license*.png
+trial_key_qr.png
+full_license_qr.png
+activation_qr.png
+
+# Certificates, Private Keys & Digital Code Signing
+*.cer
+*.crt
+*.key
+*.pem
+*.pfx
+*.p12
+*.jks
+Sign_Installer.ps1
+Install_Certificate.bat
+
+# Environment Variables & Secret Configuration
+.env
+.env.*
+*.env
+backend/.env
+frontend/.env
+
+# Databases, WAL locks, and Encrypted Backups
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.ehbak
 backend/inventory.db
 
-# Misc
-.env
-.DS_Store
-*.pem
+# Binaries, Installers & OS metadata
 *.exe
+*.msi
+*.dmg
+*.app
+Electro Hub Setup.exe
+.DS_Store
+Thumbs.db
+
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-activation_qr.png
+pnpm-debug.log*
+*.log

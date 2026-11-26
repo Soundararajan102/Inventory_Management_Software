@@ -44,13 +44,35 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({ data }) => {
   const shopName = localStorage.getItem('shopName') || 'Electro Hub';
   const shopAddress = localStorage.getItem('shopAddress') || '123 Market Street, City';
   const shopPhone = localStorage.getItem('shopPhone') || '+91 9876543210';
-  const shopGstin = localStorage.getItem('gstin') || '';
+  const shopGstin = localStorage.getItem('shopGSTIN') || localStorage.getItem('gstin') || '';
+
+  const getBalanceSuffix = (bal: number, type?: string) => {
+    if (Math.abs(bal) < 0.005) return '';
+    return type === 'Supplier'
+      ? (bal > 0 ? ' (Cr)' : ' (Dr)')
+      : (bal > 0 ? ' (Dr)' : ' (Cr)');
+  };
 
   const reportContent = (
     <div id="printable-report" className="hidden print:block bg-white text-black p-6 font-sans text-xs">
+      <style dangerouslySetInnerHTML={{ __html: `
+        @page {
+          size: A4 portrait;
+          margin: 8mm 10mm;
+        }
+        @media print {
+          #printable-report tfoot {
+            display: table-row-group !important;
+          }
+          #printable-report tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+        }
+      `}} />
       
       {/* 1. Official Header */}
-      <div className="border-b-2 border-black pb-4 mb-4 flex justify-between items-start">
+      <div className="border-b-2 border-black pb-4 mb-4 flex justify-between items-start break-inside-avoid">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-black uppercase">{shopName}</h1>
           <p className="text-gray-700 text-xs mt-0.5 max-w-md">{shopAddress}</p>
@@ -80,7 +102,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({ data }) => {
 
       {/* 2. Party Information Box (For Ledger Statements) */}
       {data.partyDetails && (
-        <div className="border border-black rounded-sm p-3 mb-4 bg-gray-50 flex justify-between items-start text-xs">
+        <div className="border border-black rounded-sm p-3 mb-4 bg-gray-50 flex justify-between items-start text-xs break-inside-avoid">
           <div>
             <span className="text-[10px] uppercase font-bold text-gray-600 block">
               {data.partyDetails.type || 'Party'} Details
@@ -100,15 +122,15 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({ data }) => {
               <div className="mb-1">
                 <span className="text-[10px] uppercase text-gray-600 block">Opening Balance</span>
                 <span className="font-bold text-xs">
-                  ₹{Math.abs(data.partyDetails.openingBalance).toFixed(2)} {data.partyDetails.openingBalance >= 0 ? '(Dr)' : '(Cr)'}
+                  ₹{Math.abs(data.partyDetails.openingBalance).toFixed(2)}{getBalanceSuffix(data.partyDetails.openingBalance, data.partyDetails.type)}
                 </span>
               </div>
             )}
             {typeof data.partyDetails.closingBalance === 'number' && (
-              <div className="border-t border-gray-300 pt-1 mt-1">
+              <div className={typeof data.partyDetails.openingBalance === 'number' ? 'border-t border-gray-300 pt-1 mt-1' : ''}>
                 <span className="text-[10px] uppercase font-bold text-black block">Closing Balance</span>
                 <span className="font-bold text-sm text-black">
-                  ₹{Math.abs(data.partyDetails.closingBalance).toFixed(2)} {data.partyDetails.closingBalance >= 0 ? '(Dr)' : '(Cr)'}
+                  ₹{Math.abs(data.partyDetails.closingBalance).toFixed(2)}{getBalanceSuffix(data.partyDetails.closingBalance, data.partyDetails.type)}
                 </span>
               </div>
             )}
@@ -118,11 +140,15 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({ data }) => {
 
       {/* 3. Summary KPI Cards */}
       {data.summaryCards && data.summaryCards.length > 0 && (
-        <div className={`grid grid-cols-${Math.min(data.summaryCards.length, 4)} gap-2 mb-4`}>
+        <div className={`grid ${
+          data.summaryCards.length === 1 ? 'grid-cols-1' :
+          data.summaryCards.length === 2 ? 'grid-cols-2' :
+          data.summaryCards.length === 3 ? 'grid-cols-3' : 'grid-cols-4'
+        } gap-2 mb-4 break-inside-avoid`}>
           {data.summaryCards.map((card, idx) => (
             <div 
               key={idx} 
-              className={`p-2.5 rounded-sm border ${card.highlight ? 'border-black bg-gray-100 font-bold' : 'border-gray-300 bg-gray-50'}`}
+              className={`p-2.5 rounded-sm border break-inside-avoid ${card.highlight ? 'border-black bg-gray-100 font-bold' : 'border-gray-300 bg-gray-50'}`}
             >
               <span className="text-[10px] uppercase font-semibold text-gray-600 block tracking-wider">
                 {card.label}
@@ -185,8 +211,8 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({ data }) => {
           {/* Table Totals Row */}
           {data.totalRow && (
             <tfoot>
-              <tr className="border-t-2 border-b-2 border-black bg-gray-100 font-bold">
-                <td className="py-2 px-2 text-left text-[11px] uppercase font-bold" colSpan={1}>Total</td>
+              <tr className="border-t-2 border-b-2 border-black bg-gray-100 font-bold break-inside-avoid">
+                <td className="py-2 px-2 text-left text-[11px] uppercase font-bold">TOTAL</td>
                 {data.columns.map((col, idx) => {
                   const val = data.totalRow?.[col.accessor];
                   return (

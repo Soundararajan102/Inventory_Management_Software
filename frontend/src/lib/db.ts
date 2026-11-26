@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql';
 import { invoke } from '@tauri-apps/api/core';
 import { getActiveCompanyDbName, getActiveCompany } from './companies';
+import { calculateBillTotals, type LineItemCalculationInput } from './billingEngine';
 
 let currentDbUrl: string | null = null;
 let dbInstance: Database | null = null;
@@ -44,7 +45,12 @@ async function initDatabaseSchema(db: Database) {
         unit TEXT DEFAULT 'Piece',
         min_stock INTEGER DEFAULT 0,
         gst_rate REAL DEFAULT 0,
-        stock_quantity INTEGER DEFAULT 0
+        gst_percentage REAL DEFAULT 18,
+        cgst_percentage REAL DEFAULT 9,
+        sgst_percentage REAL DEFAULT 9,
+        stock_quantity INTEGER DEFAULT 0,
+        parent_id INTEGER,
+        is_group INTEGER DEFAULT 0
       );
     `);
     await db.execute(`
@@ -96,8 +102,14 @@ async function initDatabaseSchema(db: Database) {
         customer_id INTEGER,
         date TEXT DEFAULT CURRENT_TIMESTAMP,
         total_amount REAL NOT NULL,
-        tax_amount REAL NOT NULL,
+        item_discount_amount REAL DEFAULT 0,
         discount REAL DEFAULT 0,
+        discount_type TEXT DEFAULT 'percentage',
+        discount_percent REAL DEFAULT 0,
+        taxable_amount REAL DEFAULT 0,
+        tax_amount REAL NOT NULL,
+        tax_method TEXT DEFAULT 'exclusive',
+        round_off REAL DEFAULT 0,
         net_amount REAL NOT NULL,
         paid_amount REAL DEFAULT 0,
         status TEXT DEFAULT 'Paid',
@@ -116,7 +128,17 @@ async function initDatabaseSchema(db: Database) {
         product_id INTEGER,
         quantity INTEGER NOT NULL,
         unit_price REAL NOT NULL,
+        discount REAL DEFAULT 0,
+        discount_type TEXT DEFAULT 'percentage',
+        discount_percent REAL DEFAULT 0,
+        taxable_amount REAL DEFAULT 0,
         tax REAL NOT NULL,
+        cgst_percentage REAL DEFAULT 0,
+        sgst_percentage REAL DEFAULT 0,
+        gst_percentage REAL DEFAULT 0,
+        net_amount REAL DEFAULT 0,
+        unit TEXT DEFAULT 'Piece',
+        product_snapshot TEXT,
         item_source_type TEXT DEFAULT 'shop',
         item_warehouse_id INTEGER
       );
@@ -126,15 +148,24 @@ async function initDatabaseSchema(db: Database) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         supplier_id INTEGER NOT NULL,
         invoice_number TEXT,
+        supplier_invoice_date TEXT,
         date TEXT DEFAULT CURRENT_TIMESTAMP,
         total_amount REAL NOT NULL,
-        tax_amount REAL NOT NULL,
+        item_discount_amount REAL DEFAULT 0,
         discount REAL DEFAULT 0,
+        discount_type TEXT DEFAULT 'percentage',
+        discount_percent REAL DEFAULT 0,
+        taxable_amount REAL DEFAULT 0,
+        tax_amount REAL NOT NULL,
+        tax_method TEXT DEFAULT 'exclusive',
+        round_off REAL DEFAULT 0,
         net_amount REAL NOT NULL,
         paid_amount REAL DEFAULT 0,
         status TEXT DEFAULT 'Paid',
+        supplier_snapshot TEXT,
         destination_type TEXT DEFAULT 'shop',
-        destination_warehouse_id INTEGER
+        destination_warehouse_id INTEGER,
+        payment_method TEXT DEFAULT 'Cash'
       );
     `);
     await db.execute(`
@@ -144,7 +175,17 @@ async function initDatabaseSchema(db: Database) {
         product_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL,
         purchase_rate REAL NOT NULL,
-        tax REAL DEFAULT 0
+        discount REAL DEFAULT 0,
+        discount_type TEXT DEFAULT 'percentage',
+        discount_percent REAL DEFAULT 0,
+        taxable_amount REAL DEFAULT 0,
+        tax REAL DEFAULT 0,
+        cgst_percentage REAL DEFAULT 0,
+        sgst_percentage REAL DEFAULT 0,
+        gst_percentage REAL DEFAULT 0,
+        net_amount REAL DEFAULT 0,
+        unit TEXT DEFAULT 'Piece',
+        product_snapshot TEXT
       );
     `);
     await db.execute(`
@@ -178,6 +219,7 @@ async function initDatabaseSchema(db: Database) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entity_type TEXT NOT NULL,
         entity_id INTEGER NOT NULL,
+        transaction_id INTEGER,
         product_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL,
         amount REAL NOT NULL,
@@ -192,8 +234,14 @@ async function initDatabaseSchema(db: Database) {
         customer_id INTEGER,
         date TEXT DEFAULT CURRENT_TIMESTAMP,
         total_amount REAL NOT NULL,
-        tax_amount REAL NOT NULL,
+        item_discount_amount REAL DEFAULT 0,
         discount REAL NOT NULL,
+        discount_type TEXT DEFAULT 'percentage',
+        discount_percent REAL DEFAULT 0,
+        taxable_amount REAL DEFAULT 0,
+        tax_amount REAL NOT NULL,
+        tax_method TEXT DEFAULT 'exclusive',
+        round_off REAL DEFAULT 0,
         net_amount REAL NOT NULL,
         status TEXT DEFAULT 'Pending',
         converted_sale_id INTEGER,
@@ -209,7 +257,15 @@ async function initDatabaseSchema(db: Database) {
         product_id INTEGER,
         quantity INTEGER NOT NULL,
         unit_price REAL NOT NULL,
+        discount REAL DEFAULT 0,
+        discount_type TEXT DEFAULT 'percentage',
+        discount_percent REAL DEFAULT 0,
+        taxable_amount REAL DEFAULT 0,
         tax REAL NOT NULL,
+        cgst_percentage REAL DEFAULT 0,
+        sgst_percentage REAL DEFAULT 0,
+        gst_percentage REAL DEFAULT 0,
+        net_amount REAL DEFAULT 0,
         unit TEXT,
         product_snapshot TEXT
       );
@@ -219,6 +275,8 @@ async function initDatabaseSchema(db: Database) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         location TEXT,
+        phone TEXT,
+        notes TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -235,10 +293,16 @@ async function initDatabaseSchema(db: Database) {
       CREATE TABLE IF NOT EXISTS stock_movements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
-        source_type TEXT NOT NULL,
-        source_id INTEGER,
-        dest_type TEXT NOT NULL,
-        dest_id INTEGER,
+        source_type TEXT DEFAULT 'shop',
+        source_id INTEGER DEFAULT 0,
+        dest_type TEXT DEFAULT 'customer',
+        dest_id INTEGER DEFAULT 0,
+        from_location_type TEXT,
+        from_location_id INTEGER,
+        from_location_name TEXT,
+        to_location_type TEXT,
+        to_location_id INTEGER,
+        to_location_name TEXT,
         quantity INTEGER NOT NULL,
         date TEXT DEFAULT CURRENT_TIMESTAMP,
         notes TEXT
@@ -280,8 +344,17 @@ async function initDatabaseSchema(db: Database) {
     } catch (e) {}
 
     // Column additions if older tables exist without newer columns
+    try { await db.execute('ALTER TABLE products ADD COLUMN barcode TEXT'); } catch (e) {}
     try { await db.execute('ALTER TABLE products ADD COLUMN group_id INTEGER'); } catch (e) {}
     try { await db.execute('ALTER TABLE products ADD COLUMN brand_id INTEGER'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN model TEXT'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN hsn_code TEXT'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN mrp REAL DEFAULT 0'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN is_group INTEGER DEFAULT 0'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN parent_id INTEGER'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN gst_percentage REAL DEFAULT 18'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN cgst_percentage REAL DEFAULT 9'); } catch (e) {}
+    try { await db.execute('ALTER TABLE products ADD COLUMN sgst_percentage REAL DEFAULT 9'); } catch (e) {}
     try { await db.execute('ALTER TABLE payments ADD COLUMN cheque_no TEXT'); } catch (e) {}
     try { await db.execute('ALTER TABLE payments ADD COLUMN bank_name TEXT'); } catch (e) {}
     try { await db.execute('ALTER TABLE payments ADD COLUMN cheque_date TEXT'); } catch (e) {}
@@ -289,11 +362,251 @@ async function initDatabaseSchema(db: Database) {
     try { await db.execute("ALTER TABLE payments ADD COLUMN is_advance INTEGER DEFAULT 0"); } catch (e) {}
     try { await db.execute("ALTER TABLE purchases ADD COLUMN destination_type TEXT DEFAULT 'shop'"); } catch (e) {}
     try { await db.execute("ALTER TABLE purchases ADD COLUMN destination_warehouse_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN discount_type TEXT DEFAULT 'percentage'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN discount_percent REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN tax_method TEXT DEFAULT 'exclusive'"); } catch (e) {}
     try { await db.execute("ALTER TABLE sales ADD COLUMN source_type TEXT DEFAULT 'shop'"); } catch (e) {}
     try { await db.execute("ALTER TABLE sales ADD COLUMN source_warehouse_id INTEGER"); } catch (e) {}
     try { await db.execute("ALTER TABLE sales ADD COLUMN dispatch_details TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN customer_snapshot TEXT"); } catch (e) {}
     try { await db.execute("ALTER TABLE customers ADD COLUMN advance_balance REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE customers ADD COLUMN gstin TEXT"); } catch (e) {}
     try { await db.execute("ALTER TABLE suppliers ADD COLUMN advance_balance REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE suppliers ADD COLUMN gstin TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE suppliers ADD COLUMN phone TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE suppliers ADD COLUMN email TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE suppliers ADD COLUMN address TEXT"); } catch (e) {}
+    try { await db.execute('ALTER TABLE sale_items ADD COLUMN unit TEXT'); } catch (e) {}
+    try { await db.execute('ALTER TABLE sale_items ADD COLUMN product_snapshot TEXT'); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN item_source_type TEXT DEFAULT 'shop'"); } catch (e) {}
+    try { await db.execute('ALTER TABLE sale_items ADD COLUMN item_warehouse_id INTEGER'); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN discount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN discount_type TEXT DEFAULT 'percentage'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN discount_percent REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute('ALTER TABLE purchase_items ADD COLUMN unit TEXT'); } catch (e) {}
+    try { await db.execute('ALTER TABLE purchase_items ADD COLUMN product_snapshot TEXT'); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN discount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN discount_type TEXT DEFAULT 'percentage'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN discount_percent REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN discount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN discount_type TEXT DEFAULT 'percentage'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN discount_percent REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN customer_snapshot TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN converted_sale_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN converted_invoice_no TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN notes TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN discount_type TEXT DEFAULT 'percentage'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN discount_percent REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN payment_method TEXT DEFAULT 'Cash'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN supplier_invoice_date TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN supplier_snapshot TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE returns ADD COLUMN transaction_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE warehouses ADD COLUMN phone TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE warehouses ADD COLUMN notes TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN from_location_type TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN from_location_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN from_location_name TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN to_location_type TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN to_location_id INTEGER"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN to_location_name TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN source_type TEXT DEFAULT 'shop'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN source_id INTEGER DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN dest_type TEXT DEFAULT 'customer'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE stock_movements ADD COLUMN dest_id INTEGER DEFAULT 0"); } catch (e) {}
+
+    // Complete Database Storage for Bills & Line Items (Zero-Guess Architecture)
+    try { await db.execute("ALTER TABLE sales ADD COLUMN taxable_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN item_discount_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN tax_method TEXT DEFAULT 'exclusive'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN round_off REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sales ADD COLUMN paid_amount REAL DEFAULT 0"); } catch (e) {}
+
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN taxable_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN cgst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN sgst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN gst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE sale_items ADD COLUMN net_amount REAL DEFAULT 0"); } catch (e) {}
+
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN taxable_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN item_discount_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN round_off REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchases ADD COLUMN paid_amount REAL DEFAULT 0"); } catch (e) {}
+
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN taxable_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN cgst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN sgst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN gst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE purchase_items ADD COLUMN net_amount REAL DEFAULT 0"); } catch (e) {}
+
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN taxable_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN item_discount_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN tax_method TEXT DEFAULT 'exclusive'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN round_off REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN discount_type TEXT DEFAULT 'percentage'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotations ADD COLUMN discount_percent REAL DEFAULT 0"); } catch (e) {}
+
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN taxable_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN cgst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN sgst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN gst_percentage REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN net_amount REAL DEFAULT 0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN unit TEXT"); } catch (e) {}
+    try { await db.execute("ALTER TABLE quotation_items ADD COLUMN product_snapshot TEXT"); } catch (e) {}
+
+    // Secondary indexes for high-traffic query performance
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_sale_items_prod ON sale_items(product_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(date)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_purchase_items_pur ON purchase_items(purchase_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_purchases_supplier ON purchases(supplier_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_payments_entity ON payments(entity_type, entity_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_returns_party ON returns(entity_type, entity_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_stock_mov_prod ON stock_movements(product_id)"); } catch (e) {}
+    try { await db.execute("CREATE INDEX IF NOT EXISTS idx_stock_mov_date ON stock_movements(date)"); } catch (e) {}
+
+    // Self-healing migration for historical sales bills missing explicit taxable amounts or tax methods
+    try {
+      const healedSetting = await db.select<{ value: string }[]>(
+        `SELECT value FROM settings WHERE key = 'historical_tax_healed_v2'`
+      );
+      if (healedSetting.length === 0 || healedSetting[0]?.value !== '1') {
+        const salesToHeal = await db.select<{ id: number; total_amount: number; tax_amount: number; net_amount: number; discount: number; tax_method: string | null; taxable_amount: number | null }[]>(
+          `SELECT id, total_amount, tax_amount, net_amount, discount, tax_method, taxable_amount FROM sales WHERE (taxable_amount IS NULL OR tax_method IS NULL OR tax_method = '') AND net_amount > 0`
+        );
+        for (const s of salesToHeal) {
+          const sItems = await db.select<{ id: number; unit_price: number; quantity: number; discount: number; discount_percent: number; tax: number; product_snapshot: string | null }[]>(
+            `SELECT id, unit_price, quantity, discount, discount_percent, tax, product_snapshot FROM sale_items WHERE sale_id = $1`,
+            [s.id]
+          );
+          let itemDiscTotal = 0;
+          let lineGrossTotal = 0;
+          for (const it of sItems) {
+            const gross = Number(it.unit_price || 0) * Number(it.quantity || 0);
+            lineGrossTotal += gross;
+            const itDisc = Number(it.discount || 0);
+            itemDiscTotal += itDisc;
+          }
+          const billDisc = Number(s.discount || 0);
+          const netAfterLineDisc = Math.max(0, lineGrossTotal - itemDiscTotal);
+          const netBasis = Math.max(0, netAfterLineDisc - billDisc);
+
+          const diffExclusive = Math.abs(s.net_amount - (netBasis + s.tax_amount));
+          const diffInclusive = Math.abs(s.net_amount - netBasis);
+          const method: 'exclusive' | 'inclusive' = s.tax_amount > 0 ? (diffExclusive <= diffInclusive ? 'exclusive' : 'inclusive') : 'exclusive';
+          const taxable = method === 'inclusive' ? Math.max(0, s.net_amount - s.tax_amount) : netBasis;
+          const exactGrandTotal = method === 'inclusive' ? s.net_amount : (taxable + s.tax_amount);
+          const roundOff = Number((s.net_amount - exactGrandTotal).toFixed(2));
+
+          await db.execute(
+            `UPDATE sales SET taxable_amount = $1, item_discount_amount = $2, tax_method = $3, round_off = $4 WHERE id = $5`,
+            [taxable, itemDiscTotal, method, roundOff, s.id]
+          );
+
+          // Also heal line items
+          for (const it of sItems) {
+            let snap: any = {};
+            if (it.product_snapshot) {
+              try { snap = JSON.parse(it.product_snapshot); } catch (e) {}
+            }
+            const gross = Number(it.unit_price || 0) * Number(it.quantity || 0);
+            const itDisc = Number(it.discount || 0);
+            const lineNet = Math.max(0, gross - itDisc);
+            const cgst = snap.cgst_percentage !== undefined ? snap.cgst_percentage : 9;
+            const sgst = snap.sgst_percentage !== undefined ? snap.sgst_percentage : 9;
+            const gst = snap.gst_percentage !== undefined ? snap.gst_percentage : (cgst + sgst);
+            const lineTaxable = method === 'inclusive' ? (gst > 0 ? lineNet / (1 + (gst / 100)) : lineNet) : lineNet;
+            const lineTax = it.tax || (lineTaxable * (gst / 100));
+            const lineNetTotal = method === 'inclusive' ? lineNet : (lineTaxable + lineTax);
+            await db.execute(
+              `UPDATE sale_items SET taxable_amount = $1, cgst_percentage = $2, sgst_percentage = $3, gst_percentage = $4, net_amount = $5 WHERE id = $6`,
+              [lineTaxable, cgst, sgst, gst, lineNetTotal, it.id]
+            );
+          }
+        }
+
+        // Self-healing migration for historical purchase bills missing explicit taxable amounts or round offs
+        const purchasesToHeal = await db.select<{ id: number; total_amount: number; tax_amount: number; net_amount: number; discount: number; tax_method: string | null; taxable_amount: number | null }[]>(
+          `SELECT id, total_amount, tax_amount, net_amount, discount, tax_method, taxable_amount FROM purchases WHERE (taxable_amount IS NULL OR tax_method IS NULL OR tax_method = '') AND net_amount > 0`
+        );
+        for (const p of purchasesToHeal) {
+          const pItems = await db.select<{ id: number; purchase_rate: number; quantity: number; discount: number; discount_percent: number; tax: number; product_snapshot: string | null }[]>(
+            `SELECT id, purchase_rate, quantity, discount, discount_percent, tax, product_snapshot FROM purchase_items WHERE purchase_id = $1`,
+            [p.id]
+          );
+          let itemDiscTotal = 0;
+          let lineGrossTotal = 0;
+          for (const it of pItems) {
+            const gross = Number(it.purchase_rate || 0) * Number(it.quantity || 0);
+            lineGrossTotal += gross;
+            itemDiscTotal += Number(it.discount || 0);
+          }
+          const billDisc = Number(p.discount || 0);
+          const netAfterLineDisc = Math.max(0, lineGrossTotal - itemDiscTotal);
+          const netBasis = Math.max(0, netAfterLineDisc - billDisc);
+
+          const method = (p.tax_method as 'exclusive' | 'inclusive') || 'exclusive';
+          const taxable = method === 'inclusive' ? Math.max(0, p.net_amount - p.tax_amount) : netBasis;
+          const exactGrandTotal = method === 'inclusive' ? p.net_amount : (taxable + p.tax_amount);
+          const roundOff = Number((p.net_amount - exactGrandTotal).toFixed(2));
+
+          await db.execute(
+            `UPDATE purchases SET taxable_amount = $1, item_discount_amount = $2, round_off = $3 WHERE id = $4`,
+            [taxable, itemDiscTotal, roundOff, p.id]
+          );
+
+          // Also heal line items
+          for (const it of pItems) {
+            let snap: any = {};
+            if (it.product_snapshot) {
+              try { snap = JSON.parse(it.product_snapshot); } catch (e) {}
+            }
+            const gross = Number(it.purchase_rate || 0) * Number(it.quantity || 0);
+            const itDisc = Number(it.discount || 0);
+            const lineNet = Math.max(0, gross - itDisc);
+            const cgst = snap.cgst_percentage !== undefined ? snap.cgst_percentage : 9;
+            const sgst = snap.sgst_percentage !== undefined ? snap.sgst_percentage : 9;
+            const gst = snap.gst_percentage !== undefined ? snap.gst_percentage : (cgst + sgst);
+            const lineTaxable = method === 'inclusive' ? (gst > 0 ? lineNet / (1 + (gst / 100)) : lineNet) : lineNet;
+            const lineTax = it.tax || (lineTaxable * (gst / 100));
+            const lineNetTotal = method === 'inclusive' ? lineNet : (lineTaxable + lineTax);
+            await db.execute(
+              `UPDATE purchase_items SET taxable_amount = $1, cgst_percentage = $2, sgst_percentage = $3, gst_percentage = $4, net_amount = $5 WHERE id = $6`,
+              [lineTaxable, cgst, sgst, gst, lineNetTotal, it.id]
+            );
+          }
+        }
+
+        await db.execute(`INSERT OR REPLACE INTO settings (key, value) VALUES ('historical_tax_healed_v2', '1')`);
+      }
+    } catch (e) {
+      console.warn('Self-healing migration note:', e);
+    }
+
+    // Self-healing migration: heal past partially returned sales and purchases to 'Partially Returned' status
+    try {
+      await db.execute(`
+        UPDATE sales 
+        SET status = 'Partially Returned' 
+        WHERE status != 'Returned' 
+          AND id IN (
+            SELECT transaction_id FROM returns WHERE entity_type = 'customer' AND transaction_id IS NOT NULL GROUP BY transaction_id HAVING SUM(quantity) > 0
+          )
+          AND (SELECT SUM(si.quantity) FROM sale_items si WHERE si.sale_id = sales.id) > (SELECT SUM(r.quantity) FROM returns r WHERE r.transaction_id = sales.id AND r.entity_type = 'customer')
+      `);
+      await db.execute(`
+        UPDATE purchases 
+        SET status = 'Partially Returned' 
+        WHERE status != 'Returned' 
+          AND id IN (
+            SELECT transaction_id FROM returns WHERE entity_type = 'supplier' AND transaction_id IS NOT NULL GROUP BY transaction_id HAVING SUM(quantity) > 0
+          )
+          AND (SELECT SUM(pi.quantity) FROM purchase_items pi WHERE pi.purchase_id = purchases.id) > (SELECT SUM(r.quantity) FROM returns r WHERE r.transaction_id = purchases.id AND r.entity_type = 'supplier')
+      `);
+    } catch (e) {
+      console.warn('Partial return status migration note:', e);
+    }
   } catch (e) {
     console.error("Error initializing database schema:", e);
   }
@@ -347,6 +660,9 @@ export interface Product {
   name: string;
   group_id: number | null;
   brand_id: number | null;
+  category_id?: number | null;
+  description?: string | null;
+  gst_rate?: number;
   group_name?: string;
   brand_name?: string;
   barcode: string | null;
@@ -492,11 +808,14 @@ export async function addProduct(
 ) {
   const db = await getDb();
   const shopStock = warehouseId ? 0 : baseData.stock;
+  const cleanBarcode = baseData.barcode && typeof baseData.barcode === 'string' && baseData.barcode.trim() !== '' 
+    ? baseData.barcode.trim() 
+    : null;
   const res = await db.execute(
     `INSERT INTO products 
       (name, group_id, brand_id, barcode, model, hsn_code, purchase_price, selling_price, mrp, unit, min_stock, stock_quantity, is_group, parent_id, gst_percentage, cgst_percentage, sgst_percentage) 
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 0, NULL, $13, $14, $15)`,
-    [name, baseData.group_id, baseData.brand_id, baseData.barcode || null, baseData.model, baseData.hsn_code, baseData.purchase_price, baseData.selling_price, baseData.mrp, baseData.unit, baseData.min_stock, shopStock, baseData.gst_percentage, baseData.cgst_percentage, baseData.sgst_percentage]
+    [name, baseData.group_id, baseData.brand_id, cleanBarcode, baseData.model, baseData.hsn_code, baseData.purchase_price, baseData.selling_price, baseData.mrp, baseData.unit, baseData.min_stock, shopStock, baseData.gst_percentage, baseData.cgst_percentage, baseData.sgst_percentage]
   );
 
   if (warehouseId && baseData.stock > 0) {
@@ -526,11 +845,12 @@ export async function updateProduct(
   sgst_percentage: number
 ) {
   const db = await getDb();
+  const cleanBarcode = barcode && typeof barcode === 'string' && barcode.trim() !== '' ? barcode.trim() : null;
   await db.execute(
     `UPDATE products SET 
       name = $1, group_id = $2, brand_id = $3, barcode = $4, model = $5, hsn_code = $6, purchase_price = $7, selling_price = $8, mrp = $9, unit = $10, min_stock = $11, stock_quantity = $12, gst_percentage = $13, cgst_percentage = $14, sgst_percentage = $15 
      WHERE id = $16`,
-    [name, group_id, brand_id, barcode, model, hsn_code, purchase_price, selling_price, mrp, unit, min_stock, stock, gst_percentage, cgst_percentage, sgst_percentage, id]
+    [name, group_id, brand_id, cleanBarcode, model, hsn_code, purchase_price, selling_price, mrp, unit, min_stock, stock, gst_percentage, cgst_percentage, sgst_percentage, id]
   );
 }
 
@@ -578,6 +898,9 @@ export interface CartItem extends Product {
   item_warehouse_id?: number | null;
   item_warehouse_name?: string;
   cart_key?: string;
+  discount?: number;
+  discount_type?: 'amount' | 'percentage';
+  discount_percent?: number;
 }
 
 export interface DispatchDetails {
@@ -607,7 +930,10 @@ export async function recordSale(
   sourceWarehouseId: number | null = null,
   saleDate?: string | null,
   dispatchDetails?: DispatchDetails | null,
-  taxMethodOverride?: 'exclusive' | 'inclusive'
+  taxMethodOverride?: 'exclusive' | 'inclusive',
+  discountPercent: number = 0,
+  roundOffOverride?: number,
+  taxableAmountOverride?: number
 ) {
   const db = await getDb();
   
@@ -627,41 +953,74 @@ export async function recordSale(
   if (effectivePaidAmount >= netAmount - 0.01) status = 'Paid';
   else if (effectivePaidAmount > 0) status = 'Partial';
   
-  // Note: tauri-plugin-sql handles queries asynchronously.
-  // We insert the sale, get the ID, then insert items and update stock.
-  
   let customerSnapshot = null;
   if (customerId !== null) {
     const custRes = await db.select<any[]>('SELECT * FROM customers WHERE id = $1', [customerId]);
     if (custRes.length > 0) customerSnapshot = JSON.stringify(custRes[0]);
   }
 
+  const taxMethod: 'exclusive' | 'inclusive' = taxMethodOverride || (localStorage.getItem('salesTaxMethod') as any) || (localStorage.getItem('taxMethod') as any) || 'exclusive';
+
+  // Calculate authoritative totals via billing engine
+  const calcInputs: LineItemCalculationInput[] = cart.map(item => ({
+    id: item.id,
+    unit_price: item.selling_price,
+    quantity: item.cart_qty,
+    discount_percent: item.discount_type === 'percentage' ? (item.discount || 0) : undefined,
+    discount_amount: item.discount_type === 'amount' ? (item.discount || 0) : undefined,
+    cgst_percentage: item.cgst_percentage,
+    sgst_percentage: item.sgst_percentage,
+    gst_percentage: item.gst_percentage
+  }));
+
+  let billPct = discountPercent || 0;
+  if (billPct <= 0 && discountAmount > 0) {
+    let grossAfterLineDisc = 0;
+    cart.forEach(item => {
+      const g = item.selling_price * item.cart_qty;
+      const d = item.discount_type === 'amount' ? Math.min(g, item.discount || 0) : (g * (item.discount || 0)) / 100;
+      grossAfterLineDisc += Math.max(0, g - d);
+    });
+    if (grossAfterLineDisc > 0) {
+      billPct = Number(((discountAmount / grossAfterLineDisc) * 100).toFixed(2));
+    }
+  }
+
+  const totals = calculateBillTotals(calcInputs, billPct, taxMethod, true);
+
+  const finalSubtotal = totalAmount || totals.subtotal;
+  const finalItemDiscount = totals.total_item_discounts;
+  const finalBillDiscount = discountAmount || totals.bill_discount_amount;
+  const finalTaxable = taxableAmountOverride !== undefined && taxableAmountOverride > 0 ? taxableAmountOverride : totals.taxable_amount;
+  const finalTax = taxAmount !== undefined && taxAmount > 0 ? taxAmount : totals.tax_amount;
+  const finalRoundOff = roundOffOverride !== undefined ? roundOffOverride : totals.round_off;
+  const finalGrandTotal = netAmount || totals.grand_total;
+
   const dispatchDetailsJson = dispatchDetails ? JSON.stringify(dispatchDetails) : null;
   const saleResult = await db.execute(
-    `INSERT INTO sales (customer_id, date, total_amount, tax_amount, discount, net_amount, paid_amount, status, payment_method, customer_snapshot, source_type, source_warehouse_id, dispatch_details) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [customerId, finalSaleDate, totalAmount, taxAmount, discountAmount, netAmount, effectivePaidAmount, status, paymentMethod, customerSnapshot, sourceType, sourceWarehouseId, dispatchDetailsJson]
+    `INSERT INTO sales (customer_id, date, total_amount, item_discount_amount, discount, discount_type, discount_percent, taxable_amount, tax_amount, tax_method, round_off, net_amount, paid_amount, status, payment_method, customer_snapshot, source_type, source_warehouse_id, dispatch_details) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+    [customerId, finalSaleDate, finalSubtotal, finalItemDiscount, finalBillDiscount, 'percentage', billPct, finalTaxable, finalTax, taxMethod, finalRoundOff, finalGrandTotal, effectivePaidAmount, status, paymentMethod, customerSnapshot, sourceType, sourceWarehouseId, dispatchDetailsJson]
   );
   
   const saleId = Number(saleResult.lastInsertId) || (await db.select<{id: number}[]>('SELECT id FROM sales ORDER BY id DESC LIMIT 1'))[0]?.id || 0;
   const saleDateObj = finalSaleDate ? new Date(finalSaleDate.replace(' ', 'T')) : new Date();
   const invoiceNumber = generateAndIncrementInvoiceNumber(saleId, isNaN(saleDateObj.getTime()) ? new Date() : saleDateObj);
   await db.execute(`UPDATE sales SET invoice_number = $1 WHERE id = $2`, [invoiceNumber, saleId]);
-  
-  let originalPriceBasis = 0;
-  cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
-  const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
-  for (const item of cart) {
-    const originalItemPrice = item.selling_price * item.cart_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
-    let taxableValue = discountedItemPrice;
-    if (taxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
-    }
-    const itemTax = taxableValue * ((item.gst_percentage || 0) / 100);
+  for (let idx = 0; idx < cart.length; idx++) {
+    const item = cart[idx];
+    const calcItem = totals.items[idx];
+
+    const lineGross = calcItem ? calcItem.line_gross : (item.selling_price * item.cart_qty);
+    const lineDiscAmt = calcItem ? calcItem.discount_amount : ((lineGross * (item.discount || 0)) / 100);
+    const itemDiscPct = calcItem ? calcItem.discount_percent : (item.discount || 0);
+    const taxableValue = calcItem ? calcItem.taxable_amount : 0;
+    const itemTax = calcItem ? calcItem.tax_amount : (taxableValue * ((item.gst_percentage || 0) / 100));
+    const lineNetTotal = calcItem ? calcItem.line_net_total : (taxableValue + itemTax);
+    const cgstPct = calcItem ? calcItem.cgst_percentage : (item.cgst_percentage || 0);
+    const sgstPct = calcItem ? calcItem.sgst_percentage : (item.sgst_percentage || 0);
+    const gstPct = calcItem ? calcItem.gst_percentage : (item.gst_percentage || (cgstPct + sgstPct));
     
     const itemSrcType = item.item_source_type || (sourceType === 'warehouse' ? 'warehouse' : 'shop');
     const itemWhId = item.item_warehouse_id || (itemSrcType === 'warehouse' ? sourceWarehouseId : null);
@@ -675,19 +1034,25 @@ export async function recordSale(
       name: item.name,
       model: item.model,
       hsn_code: item.hsn_code,
-      gst_percentage: item.gst_percentage,
-      cgst_percentage: item.cgst_percentage,
-      sgst_percentage: item.sgst_percentage,
+      purchase_price: Number(item.purchase_price) || 0,
+      gst_percentage: gstPct,
+      cgst_percentage: cgstPct,
+      sgst_percentage: sgstPct,
       source_type: itemSrcType,
       source_warehouse_id: itemWhId,
-      source_warehouse_name: itemWhName || (itemSrcType === 'shop' ? 'Main Shop' : 'Godown')
+      source_warehouse_name: itemWhName || (itemSrcType === 'shop' ? 'Main Shop' : 'Godown'),
+      discount: lineDiscAmt,
+      discount_type: 'percentage',
+      discount_percent: itemDiscPct,
+      taxable_amount: taxableValue,
+      net_amount: lineNetTotal
     });
 
-    // Insert into sale_items
+    // Insert into sale_items with complete persisted columns
     await db.execute(
-      `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, tax, unit, product_snapshot) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [saleId, item.id, item.cart_qty, item.selling_price, itemTax, item.unit, productSnapshot]
+      `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount, discount_type, discount_percent, taxable_amount, tax, cgst_percentage, sgst_percentage, gst_percentage, net_amount, unit, product_snapshot, item_source_type, item_warehouse_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      [saleId, item.id, item.cart_qty, item.selling_price, lineDiscAmt, 'percentage', itemDiscPct, taxableValue, itemTax, cgstPct, sgstPct, gstPct, lineNetTotal, item.unit, productSnapshot, itemSrcType, itemWhId]
     );
     
     if (itemSrcType === 'warehouse' && itemWhId) {
@@ -698,15 +1063,21 @@ export async function recordSale(
       );
       // Record stock movement
       await db.execute(
-        `INSERT INTO stock_movements (from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
-         VALUES ('warehouse', $1, $2, 'shop', 0, 'Customer Sale', $3, $4, $5)`,
-        [itemWhId, itemWhName || 'Godown', item.id, item.cart_qty, `Sale Invoice #${invoiceNumber}`]
+        `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+         VALUES ($1, 'warehouse', $2, $3, 'customer', 0, 'Customer Sale', $4, $5, $6)`,
+        [finalSaleDate, itemWhId, itemWhName || 'Godown', item.id, item.cart_qty, `Sale Invoice #${invoiceNumber}`]
       );
     } else {
       // Decrement stock in products table (Shop Storage)
       await db.execute(
         `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
         [item.cart_qty, item.id]
+      );
+      // Record stock movement for shop floor sale
+      await db.execute(
+        `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+         VALUES ($1, 'shop', 0, 'Main Shop', 'customer', 0, 'Customer Sale', $2, $3, $4)`,
+        [finalSaleDate, item.id, item.cart_qty, `Sale Invoice #${invoiceNumber}`]
       );
     }
   }
@@ -919,15 +1290,20 @@ export interface QuotationItem {
   product_id: number;
   quantity: number;
   unit_price: number;
+  discount?: number;
+  discount_type?: 'amount' | 'percentage';
+  discount_percent?: number;
+  taxable_amount?: number;
   tax: number;
+  cgst_percentage?: number;
+  sgst_percentage?: number;
+  gst_percentage?: number;
+  net_amount?: number;
   unit?: string;
   product_snapshot?: string;
   name?: string;
   model?: string;
   hsn_code?: string;
-  gst_percentage?: number;
-  cgst_percentage?: number;
-  sgst_percentage?: number;
   stock_quantity?: number;
 }
 
@@ -938,8 +1314,14 @@ export interface Quotation {
   customer_name?: string;
   date: string;
   total_amount: number;
+  item_discount_amount?: number;
+  taxable_amount?: number;
   tax_amount: number;
+  tax_method?: 'exclusive' | 'inclusive';
+  round_off?: number;
   discount: number;
+  discount_type?: 'amount' | 'percentage';
+  discount_percent?: number;
   net_amount: number;
   status: 'Pending' | 'Converted' | 'Cancelled';
   converted_sale_id?: number | null;
@@ -958,7 +1340,10 @@ export async function createQuotation(
   customerId: number | null,
   notes: string = '',
   quotationDate?: string | null,
-  taxMethodOverride?: 'exclusive' | 'inclusive'
+  taxMethodOverride?: 'exclusive' | 'inclusive',
+  discountPercent: number = 0,
+  roundOffOverride?: number,
+  taxableAmountOverride?: number
 ): Promise<string> {
   const db = await getDb();
   
@@ -974,47 +1359,86 @@ export async function createQuotation(
     finalQuotationDate = `${quotationDate} ${timePart}`;
   }
 
+  const taxMethod: 'exclusive' | 'inclusive' = taxMethodOverride || (localStorage.getItem('salesTaxMethod') as any) || (localStorage.getItem('taxMethod') as any) || 'exclusive';
+
+  const calcInputs: LineItemCalculationInput[] = cart.map(item => ({
+    id: item.id,
+    unit_price: item.selling_price,
+    quantity: item.cart_qty,
+    discount_percent: item.discount_type === 'percentage' ? (item.discount || 0) : undefined,
+    discount_amount: item.discount_type === 'amount' ? (item.discount || 0) : undefined,
+    cgst_percentage: item.cgst_percentage,
+    sgst_percentage: item.sgst_percentage,
+    gst_percentage: item.gst_percentage
+  }));
+
+  let billPct = discountPercent || 0;
+  if (billPct <= 0 && discountAmount > 0) {
+    let grossAfterLineDisc = 0;
+    cart.forEach(item => {
+      const g = item.selling_price * item.cart_qty;
+      const d = item.discount_type === 'amount' ? Math.min(g, item.discount || 0) : (g * (item.discount || 0)) / 100;
+      grossAfterLineDisc += Math.max(0, g - d);
+    });
+    if (grossAfterLineDisc > 0) {
+      billPct = Number(((discountAmount / grossAfterLineDisc) * 100).toFixed(2));
+    }
+  }
+
+  const totals = calculateBillTotals(calcInputs, billPct, taxMethod, true);
+
+  const finalSubtotal = totalAmount || totals.subtotal;
+  const finalItemDiscount = totals.total_item_discounts;
+  const finalBillDiscount = discountAmount || totals.bill_discount_amount;
+  const finalTaxable = taxableAmountOverride !== undefined && taxableAmountOverride > 0 ? taxableAmountOverride : totals.taxable_amount;
+  const finalTax = taxAmount !== undefined && taxAmount > 0 ? taxAmount : totals.tax_amount;
+  const finalRoundOff = roundOffOverride !== undefined ? roundOffOverride : totals.round_off;
+  const finalGrandTotal = netAmount || totals.grand_total;
+
   const result = await db.execute(
-    `INSERT INTO quotations (customer_id, total_amount, tax_amount, discount, net_amount, status, customer_snapshot, notes, date) 
-     VALUES ($1, $2, $3, $4, $5, 'Pending', $6, $7, COALESCE($8, CURRENT_TIMESTAMP))`,
-    [customerId, totalAmount, taxAmount, discountAmount, netAmount, customerSnapshot, notes, finalQuotationDate]
+    `INSERT INTO quotations (customer_id, total_amount, item_discount_amount, discount, discount_type, discount_percent, taxable_amount, tax_amount, tax_method, round_off, net_amount, status, customer_snapshot, notes, date) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'Pending', $12, $13, COALESCE($14, CURRENT_TIMESTAMP))`,
+    [customerId, finalSubtotal, finalItemDiscount, finalBillDiscount, 'percentage', billPct, finalTaxable, finalTax, taxMethod, finalRoundOff, finalGrandTotal, customerSnapshot, notes, finalQuotationDate]
   );
   
   const quotationId = Number(result.lastInsertId) || (await db.select<{id: number}[]>('SELECT id FROM quotations ORDER BY id DESC LIMIT 1'))[0]?.id || 0;
   const quotDateObj = finalQuotationDate ? new Date(finalQuotationDate.replace(' ', 'T')) : new Date();
   const quotationNumber = generateAndIncrementQuotationNumber(quotationId, isNaN(quotDateObj.getTime()) ? new Date() : quotDateObj);
   await db.execute(`UPDATE quotations SET quotation_number = $1 WHERE id = $2`, [quotationNumber, quotationId]);
-  
-  let originalPriceBasis = 0;
-  cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
-  const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
-  for (const item of cart) {
-    const originalItemPrice = item.selling_price * item.cart_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
-    let taxableValue = discountedItemPrice;
-    if (taxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
-    }
-    const itemTax = taxableValue * ((item.gst_percentage || 0) / 100);
-    
+  for (let idx = 0; idx < cart.length; idx++) {
+    const item = cart[idx];
+    const calcItem = totals.items[idx];
+
+    const lineGross = calcItem ? calcItem.line_gross : (item.selling_price * item.cart_qty);
+    const lineDiscAmt = calcItem ? calcItem.discount_amount : ((lineGross * (item.discount || 0)) / 100);
+    const itemDiscPct = calcItem ? calcItem.discount_percent : (item.discount || 0);
+    const taxableValue = calcItem ? calcItem.taxable_amount : 0;
+    const itemTax = calcItem ? calcItem.tax_amount : (taxableValue * ((item.gst_percentage || 0) / 100));
+    const lineNetTotal = calcItem ? calcItem.line_net_total : (taxableValue + itemTax);
+    const cgstPct = calcItem ? calcItem.cgst_percentage : (item.cgst_percentage || 0);
+    const sgstPct = calcItem ? calcItem.sgst_percentage : (item.sgst_percentage || 0);
+    const gstPct = calcItem ? calcItem.gst_percentage : (item.gst_percentage || (cgstPct + sgstPct));
+
     const productSnapshot = JSON.stringify({
       name: item.name,
       model: item.model,
       hsn_code: item.hsn_code,
-      gst_percentage: item.gst_percentage,
-      cgst_percentage: item.cgst_percentage,
-      sgst_percentage: item.sgst_percentage
+      gst_percentage: gstPct,
+      cgst_percentage: cgstPct,
+      sgst_percentage: sgstPct,
+      discount: lineDiscAmt,
+      discount_type: 'percentage',
+      discount_percent: itemDiscPct,
+      taxable_amount: taxableValue,
+      net_amount: lineNetTotal
     });
 
     await db.execute(
-      `INSERT INTO quotation_items (quotation_id, product_id, quantity, unit_price, tax, unit, product_snapshot) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [quotationId, item.id, item.cart_qty, item.selling_price, itemTax, item.unit, productSnapshot]
+      `INSERT INTO quotation_items (quotation_id, product_id, quantity, unit_price, discount, discount_type, discount_percent, taxable_amount, tax, cgst_percentage, sgst_percentage, gst_percentage, net_amount, unit, product_snapshot) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [quotationId, item.id, item.cart_qty, item.selling_price, lineDiscAmt, 'percentage', itemDiscPct, taxableValue, itemTax, cgstPct, sgstPct, gstPct, lineNetTotal, item.unit, productSnapshot]
     );
-    // Note: Stock is NOT deducted and customer balance is NOT modified.
   }
   
   return quotationNumber;
@@ -1030,7 +1454,10 @@ export async function updateQuotation(
   customerId: number | null,
   notes: string = '',
   quotationDate?: string | null,
-  taxMethodOverride?: 'exclusive' | 'inclusive'
+  taxMethodOverride?: 'exclusive' | 'inclusive',
+  discountPercent: number = 0,
+  roundOffOverride?: number,
+  taxableAmountOverride?: number
 ): Promise<string> {
   const db = await getDb();
   
@@ -1050,41 +1477,81 @@ export async function updateQuotation(
     finalQuotationDate = `${quotationDate} ${timePart}`;
   }
 
+  const taxMethod: 'exclusive' | 'inclusive' = taxMethodOverride || (localStorage.getItem('salesTaxMethod') as any) || (localStorage.getItem('taxMethod') as any) || 'exclusive';
+
+  const calcInputs: LineItemCalculationInput[] = cart.map(item => ({
+    id: item.id,
+    unit_price: item.selling_price,
+    quantity: item.cart_qty,
+    discount_percent: item.discount_type === 'percentage' ? (item.discount || 0) : undefined,
+    discount_amount: item.discount_type === 'amount' ? (item.discount || 0) : undefined,
+    cgst_percentage: item.cgst_percentage,
+    sgst_percentage: item.sgst_percentage,
+    gst_percentage: item.gst_percentage
+  }));
+
+  let billPct = discountPercent || 0;
+  if (billPct <= 0 && discountAmount > 0) {
+    let grossAfterLineDisc = 0;
+    cart.forEach(item => {
+      const g = item.selling_price * item.cart_qty;
+      const d = item.discount_type === 'amount' ? Math.min(g, item.discount || 0) : (g * (item.discount || 0)) / 100;
+      grossAfterLineDisc += Math.max(0, g - d);
+    });
+    if (grossAfterLineDisc > 0) {
+      billPct = Number(((discountAmount / grossAfterLineDisc) * 100).toFixed(2));
+    }
+  }
+
+  const totals = calculateBillTotals(calcInputs, billPct, taxMethod, true);
+
+  const finalSubtotal = totalAmount || totals.subtotal;
+  const finalItemDiscount = totals.total_item_discounts;
+  const finalBillDiscount = discountAmount || totals.bill_discount_amount;
+  const finalTaxable = taxableAmountOverride !== undefined && taxableAmountOverride > 0 ? taxableAmountOverride : totals.taxable_amount;
+  const finalTax = taxAmount !== undefined && taxAmount > 0 ? taxAmount : totals.tax_amount;
+  const finalRoundOff = roundOffOverride !== undefined ? roundOffOverride : totals.round_off;
+  const finalGrandTotal = netAmount || totals.grand_total;
+
   await db.execute(
-    `UPDATE quotations SET customer_id = $1, total_amount = $2, tax_amount = $3, discount = $4, net_amount = $5, customer_snapshot = $6, notes = $7, date = COALESCE($9, date) WHERE id = $8`,
-    [customerId, totalAmount, taxAmount, discountAmount, netAmount, customerSnapshot, notes, quotationId, finalQuotationDate]
+    `UPDATE quotations SET customer_id = $1, total_amount = $2, item_discount_amount = $3, discount = $4, discount_type = $5, discount_percent = $6, taxable_amount = $7, tax_amount = $8, tax_method = $9, round_off = $10, net_amount = $11, customer_snapshot = $12, notes = $13, date = COALESCE($15, date) WHERE id = $14`,
+    [customerId, finalSubtotal, finalItemDiscount, finalBillDiscount, 'percentage', billPct, finalTaxable, finalTax, taxMethod, finalRoundOff, finalGrandTotal, customerSnapshot, notes, quotationId, finalQuotationDate]
   );
 
   await db.execute('DELETE FROM quotation_items WHERE quotation_id = $1', [quotationId]);
 
-  let originalPriceBasis = 0;
-  cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
-  const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
+  for (let idx = 0; idx < cart.length; idx++) {
+    const item = cart[idx];
+    const calcItem = totals.items[idx];
 
-  for (const item of cart) {
-    const originalItemPrice = item.selling_price * item.cart_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
-    let taxableValue = discountedItemPrice;
-    if (taxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
-    }
-    const itemTax = taxableValue * ((item.gst_percentage || 0) / 100);
+    const lineGross = calcItem ? calcItem.line_gross : (item.selling_price * item.cart_qty);
+    const lineDiscAmt = calcItem ? calcItem.discount_amount : ((lineGross * (item.discount || 0)) / 100);
+    const itemDiscPct = calcItem ? calcItem.discount_percent : (item.discount || 0);
+    const taxableValue = calcItem ? calcItem.taxable_amount : 0;
+    const itemTax = calcItem ? calcItem.tax_amount : (taxableValue * ((item.gst_percentage || 0) / 100));
+    const lineNetTotal = calcItem ? calcItem.line_net_total : (taxableValue + itemTax);
+    const cgstPct = calcItem ? calcItem.cgst_percentage : (item.cgst_percentage || 0);
+    const sgstPct = calcItem ? calcItem.sgst_percentage : (item.sgst_percentage || 0);
+    const gstPct = calcItem ? calcItem.gst_percentage : (item.gst_percentage || (cgstPct + sgstPct));
 
     const productSnapshot = JSON.stringify({
       name: item.name,
       model: item.model,
       hsn_code: item.hsn_code,
-      gst_percentage: item.gst_percentage,
-      cgst_percentage: item.cgst_percentage,
-      sgst_percentage: item.sgst_percentage
+      gst_percentage: gstPct,
+      cgst_percentage: cgstPct,
+      sgst_percentage: sgstPct,
+      discount: lineDiscAmt,
+      discount_type: 'percentage',
+      discount_percent: itemDiscPct,
+      taxable_amount: taxableValue,
+      net_amount: lineNetTotal
     });
 
     await db.execute(
-      `INSERT INTO quotation_items (quotation_id, product_id, quantity, unit_price, tax, unit, product_snapshot) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [quotationId, item.id, item.cart_qty, item.selling_price, itemTax, item.unit, productSnapshot]
+      `INSERT INTO quotation_items (quotation_id, product_id, quantity, unit_price, discount, discount_type, discount_percent, taxable_amount, tax, cgst_percentage, sgst_percentage, gst_percentage, net_amount, unit, product_snapshot) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [quotationId, item.id, item.cart_qty, item.selling_price, lineDiscAmt, 'percentage', itemDiscPct, taxableValue, itemTax, cgstPct, sgstPct, gstPct, lineNetTotal, item.unit, productSnapshot]
     );
   }
 
@@ -1138,10 +1605,17 @@ export async function getQuotationById(id: number): Promise<Quotation | null> {
       name: snap.name || 'Unknown',
       model: snap.model || '',
       hsn_code: snap.hsn_code || '',
-      gst_percentage: snap.gst_percentage || 0,
-      cgst_percentage: snap.cgst_percentage || 0,
-      sgst_percentage: snap.sgst_percentage || 0,
-      stock_quantity: item.stock_quantity || 0
+      gst_percentage: item.gst_percentage ?? snap.gst_percentage ?? 0,
+      cgst_percentage: item.cgst_percentage ?? snap.cgst_percentage ?? 0,
+      sgst_percentage: item.sgst_percentage ?? snap.sgst_percentage ?? 0,
+      taxable_amount: item.taxable_amount ?? snap.taxable_amount ?? 0,
+      tax: item.tax ?? snap.tax ?? 0,
+      net_amount: item.net_amount ?? snap.net_amount ?? 0,
+      stock_quantity: item.stock_quantity || 0,
+      discount: item.discount ?? snap.discount ?? 0,
+      discount_type: item.discount_type ?? snap.discount_type ?? 'percentage',
+      discount_percent: item.discount_percent ?? snap.discount_percent ?? 0,
+      returned_quantity: Number(item.returned_quantity || 0)
     };
   });
 
@@ -1182,6 +1656,16 @@ export async function getSaleById(id: number): Promise<any> {
     [id]
   );
 
+  const returnTotals = await db.select<{ product_id: number; total_returned: number }[]>(
+    `SELECT product_id, SUM(quantity) as total_returned FROM returns WHERE transaction_id = $1 AND entity_type = 'customer' GROUP BY product_id`,
+    [id]
+  );
+  const retMap: Record<number, number> = {};
+  for (const r of returnTotals) {
+    retMap[r.product_id] = Number(r.total_returned || 0);
+  }
+  const remainingReturns = { ...retMap };
+
   let whMap: Record<number, Record<number, number>> = {};
   try {
     const whItems = await db.select<{warehouse_id: number, product_id: number, quantity: number}[]>(`
@@ -1203,21 +1687,32 @@ export async function getSaleById(id: number): Promise<any> {
     const stocks = whMap[item.product_id] || {};
     const currentStock = itemSrcType === 'warehouse' && itemWhId ? (stocks[itemWhId] || 0) : (item.shop_stock || 0);
 
+    const availRet = remainingReturns[item.product_id] || 0;
+    const allocatedRet = Math.min(Number(item.quantity || 0), availRet);
+    remainingReturns[item.product_id] = Math.max(0, availRet - allocatedRet);
+
     return {
       ...item,
       name: snap.name || item.prod_name || 'Unknown',
       model: snap.model || item.prod_model || '',
       hsn_code: snap.hsn_code || item.prod_hsn || '',
       unit: item.unit || item.prod_unit || 'Nos',
-      gst_percentage: snap.gst_percentage ?? item.prod_gst ?? 0,
-      cgst_percentage: snap.cgst_percentage ?? item.prod_cgst ?? 0,
-      sgst_percentage: snap.sgst_percentage ?? item.prod_sgst ?? 0,
+      gst_percentage: item.gst_percentage ?? snap.gst_percentage ?? item.prod_gst ?? 0,
+      cgst_percentage: item.cgst_percentage ?? snap.cgst_percentage ?? item.prod_cgst ?? 0,
+      sgst_percentage: item.sgst_percentage ?? snap.sgst_percentage ?? item.prod_sgst ?? 0,
+      taxable_amount: item.taxable_amount ?? snap.taxable_amount ?? 0,
+      tax: item.tax ?? snap.tax ?? 0,
+      net_amount: item.net_amount ?? snap.net_amount ?? 0,
       item_source_type: itemSrcType,
       item_warehouse_id: itemWhId,
       item_warehouse_name: snap.source_warehouse_name || sale.source_warehouse_name || (itemSrcType === 'shop' ? 'Main Shop' : 'Godown'),
       stock_quantity: currentStock + item.quantity,
       shop_stock: item.shop_stock || 0,
-      warehouse_stocks: stocks
+      warehouse_stocks: stocks,
+      discount: item.discount ?? snap.discount ?? 0,
+      discount_type: item.discount_type ?? snap.discount_type ?? 'percentage',
+      discount_percent: item.discount_percent ?? snap.discount_percent ?? 0,
+      returned_quantity: allocatedRet
     };
   });
 
@@ -1249,7 +1744,10 @@ export async function updateSaleBill(
   sourceWarehouseId: number | null = null,
   saleDate?: string | null,
   dispatchDetails?: DispatchDetails | null,
-  taxMethodOverride?: 'exclusive' | 'inclusive'
+  taxMethodOverride?: 'exclusive' | 'inclusive',
+  discountPercent: number = 0,
+  roundOffOverride?: number,
+  taxableAmountOverride?: number
 ) {
   const db = await getDb();
   
@@ -1260,6 +1758,16 @@ export async function updateSaleBill(
   );
   if (oldSales.length === 0) throw new Error("Sale not found");
   const oldSale = oldSales[0];
+
+  // Safeguard: Prevent editing a sale if returns have already been recorded against it
+  const existingReturns = await db.select<{ count: number }[]>(
+    `SELECT COUNT(*) as count FROM returns WHERE transaction_id = $1 AND entity_type = 'customer'`,
+    [saleId]
+  );
+  if (existingReturns.length > 0 && Number(existingReturns[0].count) > 0) {
+    throw new Error('This bill cannot be edited because return records are associated with it.');
+  }
+
   const oldSrcType = oldSale.source_type || 'shop';
   const oldWhId = oldSale.source_warehouse_id;
 
@@ -1329,27 +1837,62 @@ export async function updateSaleBill(
     finalSaleDate = saleDate.includes(' ') || saleDate.includes('T') ? saleDate : `${saleDate.trim()} ${timeStr}`;
   }
 
+  const taxMethod: 'exclusive' | 'inclusive' = taxMethodOverride || (localStorage.getItem('salesTaxMethod') as any) || (localStorage.getItem('taxMethod') as any) || 'exclusive';
+
+  const calcInputs: LineItemCalculationInput[] = cart.map(item => ({
+    id: item.id,
+    unit_price: item.selling_price,
+    quantity: item.cart_qty,
+    discount_percent: item.discount_type === 'percentage' ? (item.discount || 0) : undefined,
+    discount_amount: item.discount_type === 'amount' ? (item.discount || 0) : undefined,
+    cgst_percentage: item.cgst_percentage,
+    sgst_percentage: item.sgst_percentage,
+    gst_percentage: item.gst_percentage
+  }));
+
+  let billPct = discountPercent || 0;
+  if (billPct <= 0 && discountAmount > 0) {
+    let grossAfterLineDisc = 0;
+    cart.forEach(item => {
+      const g = item.selling_price * item.cart_qty;
+      const d = item.discount_type === 'amount' ? Math.min(g, item.discount || 0) : (g * (item.discount || 0)) / 100;
+      grossAfterLineDisc += Math.max(0, g - d);
+    });
+    if (grossAfterLineDisc > 0) {
+      billPct = Number(((discountAmount / grossAfterLineDisc) * 100).toFixed(2));
+    }
+  }
+
+  const totals = calculateBillTotals(calcInputs, billPct, taxMethod, true);
+
+  const finalSubtotal = totalAmount || totals.subtotal;
+  const finalItemDiscount = totals.total_item_discounts;
+  const finalBillDiscount = discountAmount || totals.bill_discount_amount;
+  const finalTaxable = taxableAmountOverride !== undefined && taxableAmountOverride > 0 ? taxableAmountOverride : totals.taxable_amount;
+  const finalTax = taxAmount !== undefined && taxAmount > 0 ? taxAmount : totals.tax_amount;
+  const finalRoundOff = roundOffOverride !== undefined ? roundOffOverride : totals.round_off;
+  const finalGrandTotal = netAmount || totals.grand_total;
+
   const dispatchDetailsJson = dispatchDetails ? JSON.stringify(dispatchDetails) : null;
   await db.execute(
-    `UPDATE sales SET customer_id = $1, total_amount = $2, tax_amount = $3, discount = $4, net_amount = $5, paid_amount = $6, status = $7, customer_snapshot = $8, payment_method = $9, source_type = $10, source_warehouse_id = $11, date = COALESCE($12, date), dispatch_details = $13 WHERE id = $14`,
-    [customerId, totalAmount, taxAmount, discountAmount, netAmount, effectivePaidAmount, status, customerSnapshot, paymentMethod, sourceType, sourceWarehouseId, finalSaleDate, dispatchDetailsJson, saleId]
+    `UPDATE sales SET customer_id = $1, total_amount = $2, item_discount_amount = $3, discount = $4, discount_type = $5, discount_percent = $6, taxable_amount = $7, tax_amount = $8, tax_method = $9, round_off = $10, net_amount = $11, paid_amount = $12, status = $13, customer_snapshot = $14, payment_method = $15, source_type = $16, source_warehouse_id = $17, date = COALESCE($18, date), dispatch_details = $19 WHERE id = $20`,
+    [customerId, finalSubtotal, finalItemDiscount, finalBillDiscount, 'percentage', billPct, finalTaxable, finalTax, taxMethod, finalRoundOff, finalGrandTotal, effectivePaidAmount, status, customerSnapshot, paymentMethod, sourceType, sourceWarehouseId, finalSaleDate, dispatchDetailsJson, saleId]
   );
-  
-  let originalPriceBasis = 0;
-  cart.forEach(item => { originalPriceBasis += item.selling_price * item.cart_qty; });
-  const discountRatio = originalPriceBasis > 0 ? (discountAmount / originalPriceBasis) : 0;
-  const taxMethod = taxMethodOverride || localStorage.getItem('salesTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
   // 6. Insert new items and update stock
-  for (const item of cart) {
-    const originalItemPrice = item.selling_price * item.cart_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
-    let taxableValue = discountedItemPrice;
-    if (taxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
-    }
-    const itemTax = taxableValue * ((item.gst_percentage || 0) / 100);
+  for (let idx = 0; idx < cart.length; idx++) {
+    const item = cart[idx];
+    const calcItem = totals.items[idx];
+
+    const lineGross = calcItem ? calcItem.line_gross : (item.selling_price * item.cart_qty);
+    const lineDiscAmt = calcItem ? calcItem.discount_amount : ((lineGross * (item.discount || 0)) / 100);
+    const itemDiscPct = calcItem ? calcItem.discount_percent : (item.discount || 0);
+    const taxableValue = calcItem ? calcItem.taxable_amount : 0;
+    const itemTax = calcItem ? calcItem.tax_amount : (taxableValue * ((item.gst_percentage || 0) / 100));
+    const lineNetTotal = calcItem ? calcItem.line_net_total : (taxableValue + itemTax);
+    const cgstPct = calcItem ? calcItem.cgst_percentage : (item.cgst_percentage || 0);
+    const sgstPct = calcItem ? calcItem.sgst_percentage : (item.sgst_percentage || 0);
+    const gstPct = calcItem ? calcItem.gst_percentage : (item.gst_percentage || (cgstPct + sgstPct));
     
     const itemSrcType = item.item_source_type || (sourceType === 'warehouse' ? 'warehouse' : 'shop');
     const itemWhId = item.item_warehouse_id || (itemSrcType === 'warehouse' ? sourceWarehouseId : null);
@@ -1363,18 +1906,24 @@ export async function updateSaleBill(
       name: item.name,
       model: item.model,
       hsn_code: item.hsn_code,
-      gst_percentage: item.gst_percentage,
-      cgst_percentage: item.cgst_percentage,
-      sgst_percentage: item.sgst_percentage,
+      purchase_price: Number(item.purchase_price) || 0,
+      gst_percentage: gstPct,
+      cgst_percentage: cgstPct,
+      sgst_percentage: sgstPct,
       source_type: itemSrcType,
       source_warehouse_id: itemWhId,
-      source_warehouse_name: itemWhName || (itemSrcType === 'shop' ? 'Main Shop' : 'Godown')
+      source_warehouse_name: itemWhName || (itemSrcType === 'shop' ? 'Main Shop' : 'Godown'),
+      discount: lineDiscAmt,
+      discount_type: 'percentage',
+      discount_percent: itemDiscPct,
+      taxable_amount: taxableValue,
+      net_amount: lineNetTotal
     });
 
     await db.execute(
-      `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, tax, unit, product_snapshot) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [saleId, item.id, item.cart_qty, item.selling_price, itemTax, item.unit, productSnapshot]
+      `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, discount, discount_type, discount_percent, taxable_amount, tax, cgst_percentage, sgst_percentage, gst_percentage, net_amount, unit, product_snapshot, item_source_type, item_warehouse_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      [saleId, item.id, item.cart_qty, item.selling_price, lineDiscAmt, 'percentage', itemDiscPct, taxableValue, itemTax, cgstPct, sgstPct, gstPct, lineNetTotal, item.unit, productSnapshot, itemSrcType, itemWhId]
     );
     
     if (itemSrcType === 'warehouse' && itemWhId) {
@@ -1383,14 +1932,19 @@ export async function updateSaleBill(
         [item.cart_qty, itemWhId, item.id]
       );
       await db.execute(
-        `INSERT INTO stock_movements (from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
-         VALUES ('warehouse', $1, $2, 'shop', 0, 'Customer Sale', $3, $4, $5)`,
-        [itemWhId, itemWhName || 'Godown', item.id, item.cart_qty, `Sale Invoice #${oldSale.invoice_number} (Edited)`]
+        `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+         VALUES ($1, 'warehouse', $2, $3, 'customer', 0, 'Customer Sale', $4, $5, $6)`,
+        [finalSaleDate || getLocalTimestamp(), itemWhId, itemWhName || 'Godown', item.id, item.cart_qty, `Sale Invoice #${oldSale.invoice_number} (Edited)`]
       );
     } else {
       await db.execute(
         `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2`,
         [item.cart_qty, item.id]
+      );
+      await db.execute(
+        `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+         VALUES ($1, 'shop', 0, 'Main Shop', 'customer', 0, 'Customer Sale', $2, $3, $4)`,
+        [finalSaleDate || getLocalTimestamp(), item.id, item.cart_qty, `Sale Invoice #${oldSale.invoice_number} (Edited)`]
       );
     }
   }
@@ -1499,6 +2053,7 @@ export interface Supplier {
   gstin: string | null;
   balance: number;
   advance_balance?: number;
+  contact_info?: string | null;
 }
 
 export async function getSuppliers(): Promise<Supplier[]> {
@@ -1531,6 +2086,9 @@ export async function editSupplier(id: number, name: string, phone: string, emai
 
 export interface PurchaseItem extends Product {
   purchase_qty: number;
+  discount?: number;
+  discount_type?: 'amount' | 'percentage';
+  discount_percent?: number;
 }
 
 export async function recordPurchase(
@@ -1544,7 +2102,13 @@ export async function recordPurchase(
   netAmount: number,
   paidAmount: number,
   destinationType: 'shop' | 'warehouse' = 'shop',
-  destinationWarehouseId: number | null = null
+  destinationWarehouseId: number | null = null,
+  _discountType: 'amount' | 'percentage' = 'amount',
+  discountPercent: number = 0,
+  taxMethod: 'exclusive' | 'inclusive' = 'exclusive',
+  roundOffOverride?: number,
+  taxableAmountOverride?: number,
+  paymentMethod: string = 'Cash'
 ) {
   const db = await getDb();
   
@@ -1571,43 +2135,83 @@ export async function recordPurchase(
     finalPurchaseDate = getLocalTimestamp();
   }
 
+  const effectiveTaxMethod = taxMethod || (localStorage.getItem('purchaseTaxMethod') as any) || (localStorage.getItem('taxMethod') as any) || 'exclusive';
+
+  const calcInputs: LineItemCalculationInput[] = items.map(item => ({
+    id: item.id,
+    unit_price: item.purchase_price,
+    quantity: item.purchase_qty,
+    discount_percent: item.discount_type === 'percentage' ? (item.discount || 0) : undefined,
+    discount_amount: item.discount_type === 'amount' ? (item.discount || 0) : undefined,
+    cgst_percentage: item.cgst_percentage,
+    sgst_percentage: item.sgst_percentage,
+    gst_percentage: item.gst_percentage
+  }));
+
+  let billPct = discountPercent || 0;
+  if (billPct <= 0 && discount > 0) {
+    let grossAfterLineDisc = 0;
+    items.forEach(item => {
+      const g = (item.purchase_price || 0) * (item.purchase_qty || 0);
+      const d = item.discount_type === 'amount' ? Math.min(g, item.discount || 0) : (g * (item.discount || 0)) / 100;
+      grossAfterLineDisc += Math.max(0, g - d);
+    });
+    if (grossAfterLineDisc > 0) {
+      billPct = Number(((discount / grossAfterLineDisc) * 100).toFixed(2));
+    }
+  }
+
+  const totals = calculateBillTotals(calcInputs, billPct, effectiveTaxMethod, true);
+
+  const finalSubtotal = totalAmount || totals.subtotal;
+  const finalItemDiscount = totals.total_item_discounts;
+  const finalBillDiscount = discount || totals.bill_discount_amount;
+  const finalTaxable = taxableAmountOverride !== undefined && taxableAmountOverride > 0 ? taxableAmountOverride : totals.taxable_amount;
+  const finalTax = taxAmount !== undefined && taxAmount > 0 ? taxAmount : totals.tax_amount;
+  const finalRoundOff = roundOffOverride !== undefined ? roundOffOverride : totals.round_off;
+  const finalGrandTotal = netAmount || totals.grand_total;
+
   const purchaseResult = await db.execute(
-    `INSERT INTO purchases (supplier_id, date, invoice_number, supplier_invoice_date, total_amount, tax_amount, discount, net_amount, paid_amount, status, supplier_snapshot, destination_type, destination_warehouse_id) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [supplierId, finalPurchaseDate, invoiceNo, supplierInvoiceDate, totalAmount, taxAmount, discount, netAmount, paidAmount, status, supplierSnapshot, destinationType, destinationWarehouseId]
+    `INSERT INTO purchases (supplier_id, date, invoice_number, supplier_invoice_date, total_amount, item_discount_amount, discount, discount_type, discount_percent, taxable_amount, tax_amount, tax_method, round_off, net_amount, paid_amount, status, supplier_snapshot, destination_type, destination_warehouse_id, payment_method) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+    [supplierId, finalPurchaseDate, invoiceNo, supplierInvoiceDate, finalSubtotal, finalItemDiscount, finalBillDiscount, 'percentage', billPct, finalTaxable, finalTax, effectiveTaxMethod, finalRoundOff, finalGrandTotal, paidAmount, status, supplierSnapshot, destinationType, destinationWarehouseId, paymentMethod]
   );
   
   const purchaseId = purchaseResult.lastInsertId;
-  
-  let originalPriceBasis = 0;
-  items.forEach(item => { originalPriceBasis += item.purchase_price * item.purchase_qty; });
-  const discountRatio = originalPriceBasis > 0 ? (discount / originalPriceBasis) : 0;
-  const taxMethod = localStorage.getItem('purchaseTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
 
-  for (const item of items) {
-    const originalItemPrice = item.purchase_price * item.purchase_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
-    let taxableValue = discountedItemPrice;
-    if (taxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
-    }
-    const itemTax = taxableValue * ((item.gst_percentage || 0) / 100); 
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx];
+    const calcItem = totals.items[idx];
+
+    const lineGross = calcItem ? calcItem.line_gross : ((item.purchase_price || 0) * (item.purchase_qty || 0));
+    const lineDiscAmt = calcItem ? calcItem.discount_amount : ((lineGross * (item.discount || 0)) / 100);
+    const itemDiscPct = calcItem ? calcItem.discount_percent : (item.discount || 0);
+    const taxableValue = calcItem ? calcItem.taxable_amount : 0;
+    const itemTax = calcItem ? calcItem.tax_amount : (taxableValue * ((item.gst_percentage || 0) / 100));
+    const lineNetTotal = calcItem ? calcItem.line_net_total : (taxableValue + itemTax);
+    const cgstPct = calcItem ? calcItem.cgst_percentage : (item.cgst_percentage || 0);
+    const sgstPct = calcItem ? calcItem.sgst_percentage : (item.sgst_percentage || 0);
+    const gstPct = calcItem ? calcItem.gst_percentage : (item.gst_percentage || (cgstPct + sgstPct));
     
     const productSnapshot = JSON.stringify({
       name: item.name,
       model: item.model,
       hsn_code: item.hsn_code,
-      gst_percentage: item.gst_percentage,
-      cgst_percentage: item.cgst_percentage,
-      sgst_percentage: item.sgst_percentage
+      gst_percentage: gstPct,
+      cgst_percentage: cgstPct,
+      sgst_percentage: sgstPct,
+      discount: lineDiscAmt,
+      discount_type: 'percentage',
+      discount_percent: itemDiscPct,
+      taxable_amount: taxableValue,
+      net_amount: lineNetTotal
     });
 
-    // Insert into purchase_items
+    // Insert into purchase_items with all calculated columns
     await db.execute(
-      `INSERT INTO purchase_items (purchase_id, product_id, quantity, purchase_rate, tax, unit, product_snapshot) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [purchaseId, item.id, item.purchase_qty, item.purchase_price, itemTax, item.unit, productSnapshot]
+      `INSERT INTO purchase_items (purchase_id, product_id, quantity, purchase_rate, discount, discount_type, discount_percent, taxable_amount, tax, cgst_percentage, sgst_percentage, gst_percentage, net_amount, unit, product_snapshot) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [purchaseId, item.id, item.purchase_qty, item.purchase_price, lineDiscAmt, 'percentage', itemDiscPct, taxableValue, itemTax, cgstPct, sgstPct, gstPct, lineNetTotal, item.unit, productSnapshot]
     );
     
     if (destinationType === 'warehouse' && destinationWarehouseId) {
@@ -1640,7 +2244,7 @@ export async function recordPurchase(
 
   // Record initial payment and re-sync supplier balance without consuming stored advance
   if (paidAmount > 0) {
-    await recordPayment('supplier', supplierId, paidAmount, 'Cash', invoiceNo, 'Initial Payment for Purchase', null, null, null, finalPurchaseDate, purchaseId);
+    await recordPayment('supplier', supplierId, paidAmount, paymentMethod, invoiceNo, 'Initial Payment for Purchase', null, null, null, finalPurchaseDate, purchaseId);
   }
 
   // Re-sync supplier balance to the exact total of unpaid invoice dues
@@ -1666,7 +2270,13 @@ export async function updatePurchaseBill(
   netAmount: number,
   paidAmount: number,
   destinationType: 'shop' | 'warehouse' = 'shop',
-  destinationWarehouseId: number | null = null
+  destinationWarehouseId: number | null = null,
+  _discountType: 'amount' | 'percentage' = 'amount',
+  discountPercent: number = 0,
+  taxMethod: 'exclusive' | 'inclusive' = 'exclusive',
+  roundOffOverride?: number,
+  taxableAmountOverride?: number,
+  paymentMethod: string = 'Cash'
 ) {
   const db = await getDb();
   
@@ -1677,6 +2287,16 @@ export async function updatePurchaseBill(
   );
   if (oldPurchases.length === 0) throw new Error("Purchase not found");
   const oldPurchase = oldPurchases[0];
+
+  // Safeguard: Prevent editing a purchase if returns have already been recorded against it
+  const existingReturns = await db.select<{ count: number }[]>(
+    `SELECT COUNT(*) as count FROM returns WHERE transaction_id = $1 AND entity_type = 'supplier'`,
+    [purchaseId]
+  );
+  if (existingReturns.length > 0 && Number(existingReturns[0].count) > 0) {
+    throw new Error('This purchase bill cannot be edited because return records are associated with it.');
+  }
+
   const oldDestType = oldPurchase.destination_type || 'shop';
   const oldWhId = oldPurchase.destination_warehouse_id;
 
@@ -1699,10 +2319,10 @@ export async function updatePurchaseBill(
   // 4. Delete old items
   await db.execute('DELETE FROM purchase_items WHERE purchase_id = $1', [purchaseId]);
 
-  // 5. Revert old payments
+  // 5. Revert old payments matching this purchase by either old invoice number or current invoice number
   const oldPayments = await db.select<{id: number, amount: number, entity_id: number}[]>(
-    'SELECT id, amount, entity_id FROM payments WHERE reference_no = $1 AND entity_type = $2',
-    [invoiceNo, 'supplier']
+    'SELECT id, amount, entity_id FROM payments WHERE (reference_no = $1 OR reference_no = $2) AND entity_type = $3',
+    [oldPurchase.invoice_number, invoiceNo, 'supplier']
   );
   for (const p of oldPayments) {
     // Revert the supplier balance for this payment (payment reduced balance, so we add it back)
@@ -1725,41 +2345,84 @@ export async function updatePurchaseBill(
     if (whRes.length > 0) whName = whRes[0].name;
   }
 
-  // 6. Update purchase record with destination
+  const effectiveTaxMethod = taxMethod || (localStorage.getItem('purchaseTaxMethod') as any) || (localStorage.getItem('taxMethod') as any) || 'exclusive';
+
+  const calcInputs: LineItemCalculationInput[] = items.map(item => ({
+    id: item.id,
+    unit_price: item.purchase_price,
+    quantity: item.purchase_qty,
+    discount_percent: item.discount_type === 'percentage' ? (item.discount || 0) : undefined,
+    discount_amount: item.discount_type === 'amount' ? (item.discount || 0) : undefined,
+    cgst_percentage: item.cgst_percentage,
+    sgst_percentage: item.sgst_percentage,
+    gst_percentage: item.gst_percentage
+  }));
+
+  let billPct = discountPercent || 0;
+  if (billPct <= 0 && discount > 0) {
+    let grossAfterLineDisc = 0;
+    items.forEach(item => {
+      const g = (item.purchase_price || 0) * (item.purchase_qty || 0);
+      const d = item.discount_type === 'amount' ? Math.min(g, item.discount || 0) : (g * (item.discount || 0)) / 100;
+      grossAfterLineDisc += Math.max(0, g - d);
+    });
+    if (grossAfterLineDisc > 0) {
+      billPct = Number(((discount / grossAfterLineDisc) * 100).toFixed(2));
+    }
+  }
+
+  const totals = calculateBillTotals(calcInputs, billPct, effectiveTaxMethod, true);
+
+  const finalSubtotal = totalAmount || totals.subtotal;
+  const finalItemDiscount = totals.total_item_discounts;
+  const finalBillDiscount = discount || totals.bill_discount_amount;
+  const finalTaxable = taxableAmountOverride !== undefined && taxableAmountOverride > 0 ? taxableAmountOverride : totals.taxable_amount;
+  const finalTax = taxAmount !== undefined && taxAmount > 0 ? taxAmount : totals.tax_amount;
+  const finalRoundOff = roundOffOverride !== undefined ? roundOffOverride : totals.round_off;
+  const finalGrandTotal = netAmount || totals.grand_total;
+  const finalPurchaseDate = supplierInvoiceDate && supplierInvoiceDate.trim()
+    ? (supplierInvoiceDate.includes(' ') ? supplierInvoiceDate : `${supplierInvoiceDate.trim()} ${new Date().toTimeString().split(' ')[0]}`)
+    : getLocalTimestamp();
+
+  // 6. Update purchase record with complete database columns
   await db.execute(
-    `UPDATE purchases SET supplier_id = $1, invoice_number = $2, supplier_invoice_date = $3, total_amount = $4, tax_amount = $5, discount = $6, net_amount = $7, paid_amount = $8, status = $9, supplier_snapshot = $10, destination_type = $11, destination_warehouse_id = $12 WHERE id = $13`,
-    [supplierId, invoiceNo, supplierInvoiceDate, totalAmount, taxAmount, discount, netAmount, paidAmount, status, supplierSnapshot, destinationType, destinationWarehouseId, purchaseId]
+    `UPDATE purchases SET supplier_id = $1, invoice_number = $2, supplier_invoice_date = $3, total_amount = $4, item_discount_amount = $5, discount = $6, discount_type = $7, discount_percent = $8, taxable_amount = $9, tax_amount = $10, tax_method = $11, round_off = $12, net_amount = $13, paid_amount = $14, status = $15, supplier_snapshot = $16, destination_type = $17, destination_warehouse_id = $18, date = COALESCE($19, date), payment_method = $20 WHERE id = $21`,
+    [supplierId, invoiceNo, supplierInvoiceDate, finalSubtotal, finalItemDiscount, finalBillDiscount, 'percentage', billPct, finalTaxable, finalTax, effectiveTaxMethod, finalRoundOff, finalGrandTotal, paidAmount, status, supplierSnapshot, destinationType, destinationWarehouseId, finalPurchaseDate, paymentMethod, purchaseId]
   );
 
   // 7. Insert new items and apply new stock
-  let originalPriceBasis = 0;
-  items.forEach(item => { originalPriceBasis += item.purchase_price * item.purchase_qty; });
-  const discountRatio = originalPriceBasis > 0 ? (discount / originalPriceBasis) : 0;
-  const taxMethod = localStorage.getItem('purchaseTaxMethod') || localStorage.getItem('taxMethod') || 'exclusive';
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx];
+    const calcItem = totals.items[idx];
 
-  for (const item of items) {
-    const originalItemPrice = item.purchase_price * item.purchase_qty;
-    const discountedItemPrice = originalItemPrice * (1 - discountRatio);
-    let taxableValue = discountedItemPrice;
-    if (taxMethod === 'inclusive') {
-      const gstPercent = (item.cgst_percentage || 0) + (item.sgst_percentage || 0);
-      taxableValue = discountedItemPrice / (1 + (gstPercent / 100));
-    }
-    const itemTax = taxableValue * ((item.gst_percentage || 0) / 100); 
+    const lineGross = calcItem ? calcItem.line_gross : ((item.purchase_price || 0) * (item.purchase_qty || 0));
+    const lineDiscAmt = calcItem ? calcItem.discount_amount : ((lineGross * (item.discount || 0)) / 100);
+    const itemDiscPct = calcItem ? calcItem.discount_percent : (item.discount || 0);
+    const taxableValue = calcItem ? calcItem.taxable_amount : 0;
+    const itemTax = calcItem ? calcItem.tax_amount : (taxableValue * ((item.gst_percentage || 0) / 100));
+    const lineNetTotal = calcItem ? calcItem.line_net_total : (taxableValue + itemTax);
+    const cgstPct = calcItem ? calcItem.cgst_percentage : (item.cgst_percentage || 0);
+    const sgstPct = calcItem ? calcItem.sgst_percentage : (item.sgst_percentage || 0);
+    const gstPct = calcItem ? calcItem.gst_percentage : (item.gst_percentage || (cgstPct + sgstPct));
     
     const productSnapshot = JSON.stringify({
       name: item.name,
       model: item.model,
       hsn_code: item.hsn_code,
-      gst_percentage: item.gst_percentage,
-      cgst_percentage: item.cgst_percentage,
-      sgst_percentage: item.sgst_percentage
+      gst_percentage: gstPct,
+      cgst_percentage: cgstPct,
+      sgst_percentage: sgstPct,
+      discount: lineDiscAmt,
+      discount_type: 'percentage',
+      discount_percent: itemDiscPct,
+      taxable_amount: taxableValue,
+      net_amount: lineNetTotal
     });
 
     await db.execute(
-      `INSERT INTO purchase_items (purchase_id, product_id, quantity, purchase_rate, tax, unit, product_snapshot) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [purchaseId, item.id, item.purchase_qty, item.purchase_price, itemTax, item.unit, productSnapshot]
+      `INSERT INTO purchase_items (purchase_id, product_id, quantity, purchase_rate, discount, discount_type, discount_percent, taxable_amount, tax, cgst_percentage, sgst_percentage, gst_percentage, net_amount, unit, product_snapshot) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [purchaseId, item.id, item.purchase_qty, item.purchase_price, lineDiscAmt, 'percentage', itemDiscPct, taxableValue, itemTax, cgstPct, sgstPct, gstPct, lineNetTotal, item.unit, productSnapshot]
     );
     
     if (destinationType === 'warehouse' && destinationWarehouseId) {
@@ -1770,21 +2433,26 @@ export async function updatePurchaseBill(
         [destinationWarehouseId, item.id, item.purchase_qty]
       );
       await db.execute(
-        `INSERT INTO stock_movements (from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
-         VALUES ('direct_inward', 0, $1, 'warehouse', $2, $3, $4, $5, $6)`,
-        [`Supplier (${suppName})`, destinationWarehouseId, whName, item.id, item.purchase_qty, `Purchase Inward (Edited) - Inv #${invoiceNo}`]
+        `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+         VALUES ($1, 'direct_inward', 0, $2, 'warehouse', $3, $4, $5, $6, $7)`,
+        [finalPurchaseDate, `Supplier (${suppName})`, destinationWarehouseId, whName, item.id, item.purchase_qty, `Purchase Inward (Edited) - Inv #${invoiceNo}`]
       );
     } else {
       await db.execute(
         `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2`,
         [item.purchase_qty, item.id]
       );
+      await db.execute(
+        `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+         VALUES ($1, 'direct_inward', 0, $2, 'shop', 0, 'Main Shop', $3, $4, $5)`,
+        [finalPurchaseDate, `Supplier (${suppName})`, item.id, item.purchase_qty, `Purchase Inward (Edited) - Inv #${invoiceNo}`]
+      );
     }
   }
 
   // 8. Apply new payment and authoritatively re-sync supplier balance
   if (paidAmount > 0) {
-    await recordPayment('supplier', supplierId, paidAmount, 'Cash', invoiceNo, 'Initial Payment (Edited)');
+    await recordPayment('supplier', supplierId, paidAmount, paymentMethod, invoiceNo, 'Initial Payment (Edited)', null, null, null, finalPurchaseDate, purchaseId);
   }
 
   await db.execute(
@@ -1816,6 +2484,11 @@ export interface Payment {
   payment_mode: string;
   reference_no: string | null;
   notes: string | null;
+  cheque_no?: string | null;
+  bank_name?: string | null;
+  cheque_date?: string | null;
+  cheque_status?: string | null;
+  is_advance?: boolean | number | null;
 }
 
 export async function getPayments(entityType: 'customer' | 'supplier', entityId: number): Promise<Payment[]> {
@@ -1970,6 +2643,25 @@ export async function getPartyLedger(entityType: 'customer' | 'supplier', entity
           notes: p.notes,
           is_advance: false
         });
+      } else if (p.amount === 0 && (p.payment_mode === 'Advance Adjustment' || (p.notes && p.notes.toLowerCase().includes('advance')))) {
+        entries.push({
+          id: `pay-${p.id}`,
+          date: p.date,
+          type: 'Advance',
+          description: p.notes || 'Advance Adjustment Voucher',
+          debit: 0,
+          credit: 0,
+          balance: 0,
+          original_id: p.id,
+          payment_mode: 'Advance Adjustment',
+          cheque_no: p.cheque_no,
+          bank_name: p.bank_name,
+          cheque_date: p.cheque_date,
+          cheque_status: p.cheque_status,
+          reference_no: p.reference_no,
+          notes: p.notes,
+          is_advance: true
+        });
       }
     });
 
@@ -2037,7 +2729,7 @@ export async function getPartyLedger(entityType: 'customer' | 'supplier', entity
       paid_amount: number;
       payment_method?: string | null;
     }[]>(
-      'SELECT id, date, invoice_number, net_amount, COALESCE(paid_amount, 0) as paid_amount, payment_method FROM purchases WHERE supplier_id = $1',
+      'SELECT id, date, invoice_number, net_amount, COALESCE(paid_amount, 0) as paid_amount, COALESCE(payment_method, \'Cash\') as payment_method FROM purchases WHERE supplier_id = $1',
       [entityId]
     );
 
@@ -2089,6 +2781,25 @@ export async function getPartyLedger(entityType: 'customer' | 'supplier', entity
           reference_no: p.reference_no,
           notes: p.notes,
           is_advance: false
+        });
+      } else if (p.amount === 0 && (p.payment_mode === 'Advance Adjustment' || (p.notes && p.notes.toLowerCase().includes('advance')))) {
+        entries.push({
+          id: `pay-${p.id}`,
+          date: p.date,
+          type: 'Advance',
+          description: p.notes || 'Advance Adjustment Voucher',
+          debit: 0,
+          credit: 0,
+          balance: 0,
+          original_id: p.id,
+          payment_mode: 'Advance Adjustment',
+          cheque_no: p.cheque_no,
+          bank_name: p.bank_name,
+          cheque_date: p.cheque_date,
+          cheque_status: p.cheque_status,
+          reference_no: p.reference_no,
+          notes: p.notes,
+          is_advance: true
         });
       }
     });
@@ -2186,6 +2897,12 @@ export interface PartyBillItem {
   id: number;
   invoice_number: string;
   date: string;
+  total_amount?: number;
+  item_discount_amount?: number;
+  round_off?: number;
+  tax_method?: string;
+  discount_type?: string;
+  discount_percent?: number;
   net_amount: number;
   paid_amount: number;
   tax_amount: number;
@@ -2195,6 +2912,7 @@ export interface PartyBillItem {
   item_count: number;
   products_bought: string;
   total_quantity: number;
+  total_returned_qty?: number;
   taxable_amount: number;
   due_amount: number;
 }
@@ -2245,14 +2963,18 @@ export async function getPartyProfileData(
     if (entityType === 'customer') {
       bills = await db.select<PartyBillItem[]>(`
         SELECT s.id, COALESCE(s.invoice_number, '') as invoice_number, s.date,
+               s.total_amount, COALESCE(s.item_discount_amount, 0) as item_discount_amount,
                s.net_amount, COALESCE(s.paid_amount, 0) as paid_amount,
                COALESCE(s.tax_amount, 0) as tax_amount, COALESCE(s.discount, 0) as discount,
+               COALESCE(s.round_off, 0) as round_off, COALESCE(s.tax_method, 'exclusive') as tax_method,
+               COALESCE(s.discount_type, 'percentage') as discount_type, COALESCE(s.discount_percent, 0) as discount_percent,
                COALESCE(s.status, 'Paid') as status, COALESCE(s.payment_method, 'Cash') as payment_method,
                (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as item_count,
                (SELECT GROUP_CONCAT(p.name || ' x' || si.quantity || ' (₹' || CAST(si.unit_price AS TEXT) || ' / ' || COALESCE(si.unit, p.unit) || ')', char(10)) 
                 FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = s.id) as products_bought,
                (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) as total_quantity,
-               (s.net_amount - s.tax_amount) as taxable_amount,
+               (SELECT COALESCE(SUM(r.quantity), 0) FROM returns r WHERE r.transaction_id = s.id AND r.entity_type = 'customer') as total_returned_qty,
+               COALESCE(s.taxable_amount, (s.net_amount - s.tax_amount)) as taxable_amount,
                MAX(0, s.net_amount - COALESCE(s.paid_amount, 0)) as due_amount
         FROM sales s
         WHERE s.customer_id = $1
@@ -2261,14 +2983,18 @@ export async function getPartyProfileData(
     } else {
       bills = await db.select<PartyBillItem[]>(`
         SELECT p.id, COALESCE(p.invoice_number, '') as invoice_number, p.date,
+               p.total_amount, COALESCE(p.item_discount_amount, 0) as item_discount_amount,
                p.net_amount, COALESCE(p.paid_amount, 0) as paid_amount,
                COALESCE(p.tax_amount, 0) as tax_amount, COALESCE(p.discount, 0) as discount,
-               COALESCE(p.status, 'Paid') as status, 'Cash' as payment_method,
+               COALESCE(p.round_off, 0) as round_off, COALESCE(p.tax_method, 'exclusive') as tax_method,
+               COALESCE(p.discount_type, 'percentage') as discount_type, COALESCE(p.discount_percent, 0) as discount_percent,
+               COALESCE(p.status, 'Paid') as status, COALESCE(p.payment_method, 'Cash') as payment_method,
                (SELECT COUNT(*) FROM purchase_items pi WHERE pi.purchase_id = p.id) as item_count,
                (SELECT GROUP_CONCAT(pr.name || ' x' || pi.quantity || ' (₹' || CAST(pi.purchase_rate AS TEXT) || ' / ' || COALESCE(pi.unit, pr.unit) || ')', char(10)) 
                 FROM purchase_items pi JOIN products pr ON pi.product_id = pr.id WHERE pi.purchase_id = p.id) as products_bought,
                (SELECT COALESCE(SUM(pi.quantity), 0) FROM purchase_items pi WHERE pi.purchase_id = p.id) as total_quantity,
-               (p.net_amount - p.tax_amount) as taxable_amount,
+               (SELECT COALESCE(SUM(r.quantity), 0) FROM returns r WHERE r.transaction_id = p.id AND r.entity_type = 'supplier') as total_returned_qty,
+               COALESCE(p.taxable_amount, (p.net_amount - p.tax_amount)) as taxable_amount,
                MAX(0, p.net_amount - COALESCE(p.paid_amount, 0)) as due_amount
         FROM purchases p
         WHERE p.supplier_id = $1
@@ -2310,10 +3036,13 @@ export async function getPartyProfileData(
   let returns: PartyReturnItem[] = [];
   try {
     returns = await db.select<PartyReturnItem[]>(`
-      SELECT id, date, amount, reason, CAST(transaction_id AS TEXT) as invoice_number
-      FROM returns
-      WHERE entity_type = $1 AND entity_id = $2
-      ORDER BY date DESC, id DESC
+      SELECT r.id, r.date, r.amount, r.reason,
+             COALESCE(s.invoice_number, p.invoice_number, CAST(r.transaction_id AS TEXT)) as invoice_number
+      FROM returns r
+      LEFT JOIN sales s ON r.entity_type = 'customer' AND r.transaction_id = s.id
+      LEFT JOIN purchases p ON r.entity_type = 'supplier' AND r.transaction_id = p.id
+      WHERE r.entity_type = $1 AND r.entity_id = $2
+      ORDER BY r.date DESC, r.id DESC
     `, [entityType, numericId]);
   } catch (err) {
     console.error('Failed to load party returns:', err);
@@ -2451,7 +3180,7 @@ export async function recordPayment(
   if (entityType === 'customer') {
     if (entityId > 0) {
       const isInitialPayment = Boolean(notes && notes.includes('Initial Payment'));
-      const isAdvanceDeposit = Boolean(notes && notes.toLowerCase().includes('advance deposit'));
+      const isAdvanceDeposit = Boolean((notes && notes.toLowerCase().includes('advance')) || (referenceNo && referenceNo.includes('ADV')));
 
       if (isAdvanceDeposit) {
         // Direct advance deposit: increment advance_balance only, never touch bills or unpaid balance
@@ -2461,17 +3190,17 @@ export async function recordPayment(
         );
       } else if (!isInitialPayment) {
         // Customer pays towards bills: clear bills first; excess goes to advance_balance
-        let targetSale: { id: number; net_amount: number; paid_amount: number } | null = null;
+        let targetSale: { id: number; net_amount: number; paid_amount: number; status: string | null } | null = null;
         if (targetBillId) {
-          const found = await db.select<{ id: number; net_amount: number; paid_amount: number }[]>(
-            `SELECT id, net_amount, paid_amount FROM sales WHERE id = $1 AND customer_id = $2`,
+          const found = await db.select<{ id: number; net_amount: number; paid_amount: number; status: string | null }[]>(
+            `SELECT id, net_amount, paid_amount, status FROM sales WHERE id = $1 AND customer_id = $2`,
             [targetBillId, entityId]
           );
           if (found.length > 0) targetSale = found[0];
         } else if (referenceNo && referenceNo.trim()) {
           const ref = referenceNo.trim();
-          const found = await db.select<{ id: number; net_amount: number; paid_amount: number }[]>(
-            `SELECT id, net_amount, paid_amount FROM sales WHERE customer_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
+          const found = await db.select<{ id: number; net_amount: number; paid_amount: number; status: string | null }[]>(
+            `SELECT id, net_amount, paid_amount, status FROM sales WHERE customer_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
             [entityId, ref]
           );
           if (found.length > 0) targetSale = found[0];
@@ -2481,7 +3210,7 @@ export async function recordPayment(
           const due = Math.max(0, targetSale.net_amount - (targetSale.paid_amount || 0));
           const payTowardsThis = Math.min(due, amount);
           const newPaid = (targetSale.paid_amount || 0) + payTowardsThis;
-          const newStatus = newPaid >= (targetSale.net_amount - 0.01) ? 'Paid' : 'Partial';
+          const newStatus = newPaid >= (targetSale.net_amount - 0.01) ? (targetSale.status === 'Partially Returned' ? 'Partially Returned' : 'Paid') : 'Partial';
           await db.execute(
             `UPDATE sales SET paid_amount = $1, status = $2 WHERE id = $3`,
             [newPaid, newStatus, targetSale.id]
@@ -2498,8 +3227,8 @@ export async function recordPayment(
         } else {
           // General FIFO payment across unpaid bills
           let remainingPayment = amount;
-          const unpaidSales = await db.select<{id: number, net_amount: number, paid_amount: number}[]>(
-            `SELECT id, net_amount, paid_amount FROM sales WHERE customer_id = $1 AND status != 'Paid' AND status != 'Returned' ORDER BY id ASC`,
+          const unpaidSales = await db.select<{id: number, net_amount: number, paid_amount: number, status: string | null}[]>(
+            `SELECT id, net_amount, paid_amount, status FROM sales WHERE customer_id = $1 AND status != 'Paid' AND status != 'Returned' ORDER BY id ASC`,
             [entityId]
           );
           for (const sale of unpaidSales) {
@@ -2508,7 +3237,7 @@ export async function recordPayment(
             if (due > 0) {
               const payTowardsThis = Math.min(due, remainingPayment);
               const newPaid = (sale.paid_amount || 0) + payTowardsThis;
-              const newStatus = newPaid >= (sale.net_amount - 0.01) ? 'Paid' : 'Partial';
+              const newStatus = newPaid >= (sale.net_amount - 0.01) ? (sale.status === 'Partially Returned' ? 'Partially Returned' : 'Paid') : 'Partial';
               await db.execute(
                 `UPDATE sales SET paid_amount = $1, status = $2 WHERE id = $3`,
                 [newPaid, newStatus, sale.id]
@@ -2540,7 +3269,7 @@ export async function recordPayment(
   } else {
     if (entityId > 0) {
       const isInitialPayment = Boolean(notes && notes.includes('Initial Payment'));
-      const isAdvanceDeposit = Boolean(notes && notes.toLowerCase().includes('advance deposit'));
+      const isAdvanceDeposit = Boolean((notes && notes.toLowerCase().includes('advance')) || (referenceNo && referenceNo.includes('ADV')));
 
       if (isAdvanceDeposit) {
         // Direct advance payment to supplier: increment advance_balance only, never touch bills or unpaid balance
@@ -2550,17 +3279,17 @@ export async function recordPayment(
         );
       } else if (!isInitialPayment) {
         // Supplier payment towards bills: clear bills first; excess goes to advance_balance
-        let targetPurchase: { id: number; net_amount: number; paid_amount: number } | null = null;
+        let targetPurchase: { id: number; net_amount: number; paid_amount: number; status: string | null } | null = null;
         if (targetBillId) {
-          const found = await db.select<{ id: number; net_amount: number; paid_amount: number }[]>(
-            `SELECT id, net_amount, paid_amount FROM purchases WHERE id = $1 AND supplier_id = $2`,
+          const found = await db.select<{ id: number; net_amount: number; paid_amount: number; status: string | null }[]>(
+            `SELECT id, net_amount, paid_amount, status FROM purchases WHERE id = $1 AND supplier_id = $2`,
             [targetBillId, entityId]
           );
           if (found.length > 0) targetPurchase = found[0];
         } else if (referenceNo && referenceNo.trim()) {
           const ref = referenceNo.trim();
-          const found = await db.select<{ id: number; net_amount: number; paid_amount: number }[]>(
-            `SELECT id, net_amount, paid_amount FROM purchases WHERE supplier_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
+          const found = await db.select<{ id: number; net_amount: number; paid_amount: number; status: string | null }[]>(
+            `SELECT id, net_amount, paid_amount, status FROM purchases WHERE supplier_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
             [entityId, ref]
           );
           if (found.length > 0) targetPurchase = found[0];
@@ -2570,7 +3299,7 @@ export async function recordPayment(
           const due = Math.max(0, targetPurchase.net_amount - (targetPurchase.paid_amount || 0));
           const payTowardsThis = Math.min(due, amount);
           const newPaid = (targetPurchase.paid_amount || 0) + payTowardsThis;
-          const newStatus = newPaid >= (targetPurchase.net_amount - 0.01) ? 'Paid' : 'Partial';
+          const newStatus = newPaid >= (targetPurchase.net_amount - 0.01) ? (targetPurchase.status === 'Partially Returned' ? 'Partially Returned' : 'Paid') : 'Partial';
           await db.execute(
             `UPDATE purchases SET paid_amount = $1, status = $2 WHERE id = $3`,
             [newPaid, newStatus, targetPurchase.id]
@@ -2587,8 +3316,8 @@ export async function recordPayment(
         } else {
           // General FIFO payment to supplier across unpaid purchases
           let remainingPayment = amount;
-          const unpaidPurchases = await db.select<{id: number, net_amount: number, paid_amount: number}[]>(
-            `SELECT id, net_amount, paid_amount FROM purchases WHERE supplier_id = $1 AND status != 'Paid' AND status != 'Returned' ORDER BY id ASC`,
+          const unpaidPurchases = await db.select<{id: number, net_amount: number, paid_amount: number, status: string | null}[]>(
+            `SELECT id, net_amount, paid_amount, status FROM purchases WHERE supplier_id = $1 AND status != 'Paid' AND status != 'Returned' ORDER BY id ASC`,
             [entityId]
           );
           for (const pur of unpaidPurchases) {
@@ -2597,7 +3326,7 @@ export async function recordPayment(
             if (due > 0) {
               const payTowardsThis = Math.min(due, remainingPayment);
               const newPaid = (pur.paid_amount || 0) + payTowardsThis;
-              const newStatus = newPaid >= (pur.net_amount - 0.01) ? 'Paid' : 'Partial';
+              const newStatus = newPaid >= (pur.net_amount - 0.01) ? (pur.status === 'Partially Returned' ? 'Partially Returned' : 'Paid') : 'Partial';
               await db.execute(
                 `UPDATE purchases SET paid_amount = $1, status = $2 WHERE id = $3`,
                 [newPaid, newStatus, pur.id]
@@ -2667,8 +3396,9 @@ export async function applyAdvanceToClearDues(
         const payTowardsThis = Math.min(due, remaining);
         const newPaid = (sale.paid_amount || 0) + payTowardsThis;
         const newStatus = newPaid >= (sale.net_amount - 0.01) ? 'Paid' : 'Partial';
+        const paymentMethodUpdate = (sale.paid_amount || 0) === 0 ? ", payment_method = 'Advance Adjustment'" : "";
         await db.execute(
-          `UPDATE sales SET paid_amount = $1, status = $2 WHERE id = $3`,
+          `UPDATE sales SET paid_amount = $1, status = $2${paymentMethodUpdate} WHERE id = $3`,
           [newPaid, newStatus, sale.id]
         );
         remaining -= payTowardsThis;
@@ -2691,8 +3421,9 @@ export async function applyAdvanceToClearDues(
         const payTowardsThis = Math.min(due, remaining);
         const newPaid = (pur.paid_amount || 0) + payTowardsThis;
         const newStatus = newPaid >= (pur.net_amount - 0.01) ? 'Paid' : 'Partial';
+        const purPaymentMethodUpdate = (pur.paid_amount || 0) === 0 ? ", payment_method = 'Advance Adjustment'" : "";
         await db.execute(
-          `UPDATE purchases SET paid_amount = $1, status = $2 WHERE id = $3`,
+          `UPDATE purchases SET paid_amount = $1, status = $2${purPaymentMethodUpdate} WHERE id = $3`,
           [newPaid, newStatus, pur.id]
         );
         remaining -= payTowardsThis;
@@ -2763,7 +3494,7 @@ export async function clearPdcCheque(paymentId: number) {
   const entityId = Number(p.entity_id);
   const entityType = p.entity_type;
   const ref = (p.reference_no || '').trim();
-  const isAdvanceDeposit = Boolean(p.notes && p.notes.toLowerCase().includes('advance deposit'));
+  const isAdvanceDeposit = Boolean((p.notes && p.notes.toLowerCase().includes('advance')) || (ref && ref.includes('ADV')));
 
   if (entityType === 'customer' && entityId > 0) {
     if (isAdvanceDeposit) {
@@ -2897,33 +3628,42 @@ export async function bounceCheque(paymentId: number) {
     const amount = Number(p.amount);
     const entityId = Number(p.entity_id);
     const ref = (p.reference_no || '').trim();
+    const isAdv = Boolean((p.notes && p.notes.toLowerCase().includes('advance')) || (ref && ref.includes('ADV')));
 
     if (p.entity_type === 'customer' && entityId > 0) {
-      await db.execute('UPDATE customers SET balance = balance + $1 WHERE id = $2', [amount, entityId]);
-      if (ref) {
-        const found = await db.select<{id: number, net_amount: number, paid_amount: number}[]>(
-          `SELECT id, net_amount, paid_amount FROM sales WHERE customer_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
-          [entityId, ref]
-        );
-        if (found.length > 0) {
-          const s = found[0];
-          const newPaid = Math.max(0, (s.paid_amount || 0) - amount);
-          const newStatus = newPaid <= 0.01 ? 'Unpaid' : newPaid < (s.net_amount - 0.01) ? 'Partial' : 'Paid';
-          await db.execute('UPDATE sales SET paid_amount = $1, status = $2 WHERE id = $3', [newPaid, newStatus, s.id]);
+      if (isAdv) {
+        await db.execute('UPDATE customers SET advance_balance = MAX(0, advance_balance - $1) WHERE id = $2', [amount, entityId]);
+      } else {
+        await db.execute('UPDATE customers SET balance = balance + $1 WHERE id = $2', [amount, entityId]);
+        if (ref) {
+          const found = await db.select<{id: number, net_amount: number, paid_amount: number}[]>(
+            `SELECT id, net_amount, paid_amount FROM sales WHERE customer_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
+            [entityId, ref]
+          );
+          if (found.length > 0) {
+            const s = found[0];
+            const newPaid = Math.max(0, (s.paid_amount || 0) - amount);
+            const newStatus = newPaid <= 0.01 ? 'Unpaid' : newPaid < (s.net_amount - 0.01) ? 'Partial' : 'Paid';
+            await db.execute('UPDATE sales SET paid_amount = $1, status = $2 WHERE id = $3', [newPaid, newStatus, s.id]);
+          }
         }
       }
     } else if (p.entity_type === 'supplier' && entityId > 0) {
-      await db.execute('UPDATE suppliers SET balance = balance + $1 WHERE id = $2', [amount, entityId]);
-      if (ref) {
-        const found = await db.select<{id: number, net_amount: number, paid_amount: number}[]>(
-          `SELECT id, net_amount, paid_amount FROM purchases WHERE supplier_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
-          [entityId, ref]
-        );
-        if (found.length > 0) {
-          const pur = found[0];
-          const newPaid = Math.max(0, (pur.paid_amount || 0) - amount);
-          const newStatus = newPaid <= 0.01 ? 'Unpaid' : newPaid < (pur.net_amount - 0.01) ? 'Partial' : 'Paid';
-          await db.execute('UPDATE purchases SET paid_amount = $1, status = $2 WHERE id = $3', [newPaid, newStatus, pur.id]);
+      if (isAdv) {
+        await db.execute('UPDATE suppliers SET advance_balance = MAX(0, advance_balance - $1) WHERE id = $2', [amount, entityId]);
+      } else {
+        await db.execute('UPDATE suppliers SET balance = balance + $1 WHERE id = $2', [amount, entityId]);
+        if (ref) {
+          const found = await db.select<{id: number, net_amount: number, paid_amount: number}[]>(
+            `SELECT id, net_amount, paid_amount FROM purchases WHERE supplier_id = $1 AND (invoice_number = $2 OR CAST(id AS TEXT) = $2)`,
+            [entityId, ref]
+          );
+          if (found.length > 0) {
+            const pur = found[0];
+            const newPaid = Math.max(0, (pur.paid_amount || 0) - amount);
+            const newStatus = newPaid <= 0.01 ? 'Unpaid' : newPaid < (pur.net_amount - 0.01) ? 'Partial' : 'Paid';
+            await db.execute('UPDATE purchases SET paid_amount = $1, status = $2 WHERE id = $3', [newPaid, newStatus, pur.id]);
+          }
         }
       }
     }
@@ -2963,20 +3703,28 @@ export async function getExpenses(): Promise<Expense[]> {
   return await db.select('SELECT * FROM expenses ORDER BY id DESC');
 }
 
-export async function recordExpense(category: string, amount: number, description: string) {
+export async function recordExpense(category: string, amount: number, description: string, date?: string) {
   const db = await getDb();
+  const expenseDate = date || getLocalTimestamp();
   await db.execute(
-    `INSERT INTO expenses (category, amount, description) VALUES ($1, $2, $3)`,
-    [category, amount, description]
+    `INSERT INTO expenses (category, amount, description, date) VALUES ($1, $2, $3, $4)`,
+    [category, amount, description, expenseDate]
   );
 }
 
-export async function updateExpense(id: number, category: string, amount: number, description: string) {
+export async function updateExpense(id: number, category: string, amount: number, description: string, date?: string) {
   const db = await getDb();
-  await db.execute(
-    `UPDATE expenses SET category = $1, amount = $2, description = $3 WHERE id = $4`,
-    [category, amount, description, id]
-  );
+  if (date) {
+    await db.execute(
+      `UPDATE expenses SET category = $1, amount = $2, description = $3, date = $4 WHERE id = $5`,
+      [category, amount, description, date, id]
+    );
+  } else {
+    await db.execute(
+      `UPDATE expenses SET category = $1, amount = $2, description = $3 WHERE id = $4`,
+      [category, amount, description, id]
+    );
+  }
 }
 
 export async function deleteExpense(id: number) {
@@ -3054,7 +3802,7 @@ export async function recordReturn(
 
       // Check max returnable for this item
       const itemRow = await db.select<{ quantity: number }[]>(
-        `SELECT quantity FROM sale_items WHERE sale_id = $1 AND product_id = $2`,
+        `SELECT COALESCE(SUM(quantity), 0) as quantity FROM sale_items WHERE sale_id = $1 AND product_id = $2`,
         [transactionId, productId]
       );
       if (itemRow.length > 0) {
@@ -3082,18 +3830,40 @@ export async function recordReturn(
     const custRes = entityId > 0 ? await db.select<{ name: string }[]>('SELECT name FROM customers WHERE id = $1', [entityId]) : [];
     const custName = custRes.length > 0 ? custRes[0].name : 'Walk-in Customer';
 
-    if (saleRow && saleRow.source_type === 'warehouse' && saleRow.source_warehouse_id) {
+    let targetLocationType = (saleRow && saleRow.source_type === 'warehouse') ? 'warehouse' : 'shop';
+    let targetWarehouseId = saleRow?.source_warehouse_id || null;
+    let targetWhName = 'Warehouse';
+    if (transactionId) {
+      try {
+        const itemLocRes = await db.select<{ item_source_type: string; item_warehouse_id: number | null }[]>(
+          `SELECT item_source_type, item_warehouse_id FROM sale_items WHERE sale_id = $1 AND product_id = $2 LIMIT 1`,
+          [transactionId, productId]
+        );
+        if (itemLocRes.length > 0 && itemLocRes[0].item_source_type) {
+          targetLocationType = itemLocRes[0].item_source_type;
+          targetWarehouseId = itemLocRes[0].item_warehouse_id;
+        }
+      } catch (e) {}
+    }
+    if (targetLocationType === 'warehouse' && targetWarehouseId) {
+      try {
+        const whRes = await db.select<{ name: string }[]>('SELECT name FROM warehouses WHERE id = $1', [targetWarehouseId]);
+        if (whRes.length > 0) targetWhName = whRes[0].name;
+      } catch (e) {}
+    }
+
+    if (targetLocationType === 'warehouse' && targetWarehouseId) {
       await db.execute(
         `INSERT INTO warehouse_items (warehouse_id, product_id, quantity) 
          VALUES ($1, $2, $3) 
          ON CONFLICT(warehouse_id, product_id) DO UPDATE SET quantity = quantity + $3`,
-        [saleRow.source_warehouse_id, productId, numQty]
+        [targetWarehouseId, productId, numQty]
       );
       // Log stock movement
       await db.execute(
         `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
-         VALUES ($1, 'customer', $2, $3, 'warehouse', $4, 'Warehouse', $5, $6, $7)`,
-        [returnDate, entityId, custName, saleRow.source_warehouse_id, productId, numQty, `Customer Return - Sale #${saleRow.invoice_number || transactionId}`]
+         VALUES ($1, 'customer', $2, $3, 'warehouse', $4, $5, $6, $7, $8)`,
+        [returnDate, entityId, custName, targetWarehouseId, targetWhName, productId, numQty, `Customer Return - Sale #${saleRow?.invoice_number || transactionId}`]
       );
     } else {
       await db.execute(`UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2`, [numQty, productId]);
@@ -3111,6 +3881,22 @@ export async function recordReturn(
       const oldPaid = saleRow.paid_amount;
       const newNet = Math.max(0, oldNet - numAmt);
 
+      // Proportionally adjust taxable_amount and tax_amount on the sales record
+      let returnedTaxable = 0;
+      let returnedTax = 0;
+      try {
+        const siRow = await db.select<{ taxable_amount: number; tax: number; quantity: number }[]>(
+          `SELECT COALESCE(SUM(taxable_amount), 0) as taxable_amount, COALESCE(SUM(tax), 0) as tax, COALESCE(SUM(quantity), 0) as quantity 
+           FROM sale_items WHERE sale_id = $1 AND product_id = $2`,
+          [transactionId, productId]
+        );
+        if (siRow.length > 0 && siRow[0].quantity > 0) {
+          const ratio = Math.min(1, numQty / siRow[0].quantity);
+          returnedTaxable = (siRow[0].taxable_amount || 0) * ratio;
+          returnedTax = (siRow[0].tax || 0) * ratio;
+        }
+      } catch (e) {}
+
       if (oldPaid > newNet) {
         // Customer overpaid on this bill because the net total reduced below what they paid
         const excessPaid = oldPaid - newNet;
@@ -3120,7 +3906,10 @@ export async function recordReturn(
             `UPDATE customers SET advance_balance = COALESCE(advance_balance, 0) + $1 WHERE id = $2`,
             [excessPaid, entityId]
           );
-          await db.execute(`UPDATE sales SET net_amount = $1, paid_amount = $2 WHERE id = $3`, [newNet, newNet, transactionId]);
+          await db.execute(
+            `UPDATE sales SET net_amount = $1, paid_amount = $2, taxable_amount = MAX(0, taxable_amount - $3), tax_amount = MAX(0, tax_amount - $4) WHERE id = $5`,
+            [newNet, newNet, returnedTaxable, returnedTax, transactionId]
+          );
         } else {
           // Cash refund: payout cash
           await db.execute(
@@ -3128,11 +3917,17 @@ export async function recordReturn(
              VALUES ('customer', $1, $2, $3, 'Cash', $4, 'Cash Refund for Return')`,
             [entityId, returnDate, -excessPaid, saleRow.invoice_number ? `Ret-${saleRow.invoice_number}` : `Ret-Inv-${transactionId}`]
           );
-          await db.execute(`UPDATE sales SET net_amount = $1, paid_amount = $2 WHERE id = $3`, [newNet, newNet, transactionId]);
+          await db.execute(
+            `UPDATE sales SET net_amount = $1, paid_amount = $2, taxable_amount = MAX(0, taxable_amount - $3), tax_amount = MAX(0, tax_amount - $4) WHERE id = $5`,
+            [newNet, newNet, returnedTaxable, returnedTax, transactionId]
+          );
         }
       } else {
         // Bill was unpaid or partially paid; reducing net_amount lowers the pending due
-        await db.execute(`UPDATE sales SET net_amount = $1 WHERE id = $2`, [newNet, transactionId]);
+        await db.execute(
+          `UPDATE sales SET net_amount = $1, taxable_amount = MAX(0, taxable_amount - $2), tax_amount = MAX(0, tax_amount - $3) WHERE id = $4`,
+          [newNet, returnedTaxable, returnedTax, transactionId]
+        );
       }
 
       // Update bill status
@@ -3157,6 +3952,8 @@ export async function recordReturn(
       let newStatus = 'Unpaid';
       if (totalReturned >= totalBilled && totalBilled > 0) {
         newStatus = 'Returned';
+      } else if (totalReturned > 0) {
+        newStatus = 'Partially Returned';
       } else if (currentPaid >= currentNet && currentNet > 0) {
         newStatus = 'Paid';
       } else if (currentPaid > 0) {
@@ -3220,7 +4017,7 @@ export async function recordReturn(
 
       // Check max returnable for this item
       const itemRow = await db.select<{ quantity: number }[]>(
-        `SELECT quantity FROM purchase_items WHERE purchase_id = $1 AND product_id = $2`,
+        `SELECT COALESCE(SUM(quantity), 0) as quantity FROM purchase_items WHERE purchase_id = $1 AND product_id = $2`,
         [transactionId, productId]
       );
       if (itemRow.length > 0) {
@@ -3293,6 +4090,22 @@ export async function recordReturn(
       const oldPaid = purRow.paid_amount;
       const newNet = Math.max(0, oldNet - numAmt);
 
+      // Proportionally adjust taxable_amount and tax_amount on the purchase record
+      let returnedTaxable = 0;
+      let returnedTax = 0;
+      try {
+        const piRow = await db.select<{ taxable_amount: number; tax: number; quantity: number }[]>(
+          `SELECT COALESCE(SUM(taxable_amount), 0) as taxable_amount, COALESCE(SUM(tax), 0) as tax, COALESCE(SUM(quantity), 0) as quantity 
+           FROM purchase_items WHERE purchase_id = $1 AND product_id = $2`,
+          [transactionId, productId]
+        );
+        if (piRow.length > 0 && piRow[0].quantity > 0) {
+          const ratio = Math.min(1, numQty / piRow[0].quantity);
+          returnedTaxable = (piRow[0].taxable_amount || 0) * ratio;
+          returnedTax = (piRow[0].tax || 0) * ratio;
+        }
+      } catch (e) {}
+
       if (oldPaid > newNet) {
         const excessPaid = oldPaid - newNet;
         if (refundMethod === 'credit' && entityId > 0) {
@@ -3300,17 +4113,26 @@ export async function recordReturn(
             `UPDATE suppliers SET advance_balance = COALESCE(advance_balance, 0) + $1 WHERE id = $2`,
             [excessPaid, entityId]
           );
-          await db.execute(`UPDATE purchases SET net_amount = $1, paid_amount = $2 WHERE id = $3`, [newNet, newNet, transactionId]);
+          await db.execute(
+            `UPDATE purchases SET net_amount = $1, paid_amount = $2, taxable_amount = MAX(0, taxable_amount - $3), tax_amount = MAX(0, tax_amount - $4) WHERE id = $5`,
+            [newNet, newNet, returnedTaxable, returnedTax, transactionId]
+          );
         } else {
           await db.execute(
             `INSERT INTO payments (entity_type, entity_id, date, amount, payment_mode, reference_no, notes) 
              VALUES ('supplier', $1, $2, $3, 'Cash', $4, 'Cash Refund for Purchase Return')`,
             [entityId, returnDate, -excessPaid, purRow.invoice_number ? `Ret-${purRow.invoice_number}` : `Ret-Pur-${transactionId}`]
           );
-          await db.execute(`UPDATE purchases SET net_amount = $1, paid_amount = $2 WHERE id = $3`, [newNet, newNet, transactionId]);
+          await db.execute(
+            `UPDATE purchases SET net_amount = $1, paid_amount = $2, taxable_amount = MAX(0, taxable_amount - $3), tax_amount = MAX(0, tax_amount - $4) WHERE id = $5`,
+            [newNet, newNet, returnedTaxable, returnedTax, transactionId]
+          );
         }
       } else {
-        await db.execute(`UPDATE purchases SET net_amount = $1 WHERE id = $2`, [newNet, transactionId]);
+        await db.execute(
+          `UPDATE purchases SET net_amount = $1, taxable_amount = MAX(0, taxable_amount - $2), tax_amount = MAX(0, tax_amount - $3) WHERE id = $4`,
+          [newNet, returnedTaxable, returnedTax, transactionId]
+        );
       }
 
       // Update purchase status
@@ -3335,6 +4157,8 @@ export async function recordReturn(
       let newStatus = 'Unpaid';
       if (totalReturned >= totalBilled && totalBilled > 0) {
         newStatus = 'Returned';
+      } else if (totalReturned > 0) {
+        newStatus = 'Partially Returned';
       } else if (currentPaid >= currentNet && currentNet > 0) {
         newStatus = 'Paid';
       } else if (currentPaid > 0) {
@@ -3386,7 +4210,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const totalProducts = products.length;
   const threshold = parseInt(localStorage.getItem('lowStockThreshold') || '10', 10);
   const lowStockItems = products.filter(p => p.stock_quantity < threshold).length;
-  let totalInventoryValue = products.reduce((sum, p) => sum + (p.stock_quantity * (p.purchase_price > 0 ? p.purchase_price : p.selling_price)), 0);
+  let totalInventoryValue = products.reduce((sum, p) => sum + (Math.max(0, p.stock_quantity) * (p.purchase_price > 0 ? p.purchase_price : p.selling_price)), 0);
   try {
     const whStock = await db.select<{quantity: number, purchase_price: number, selling_price: number}[]>(`
       SELECT wi.quantity, p.purchase_price, p.selling_price 
@@ -3394,7 +4218,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       JOIN products p ON wi.product_id = p.id 
       WHERE wi.quantity > 0
     `);
-    const whValuation = whStock.reduce((sum, wi) => sum + (wi.quantity * (wi.purchase_price > 0 ? wi.purchase_price : wi.selling_price)), 0);
+    const whValuation = whStock.reduce((sum, wi) => sum + (Math.max(0, wi.quantity) * (wi.purchase_price > 0 ? wi.purchase_price : wi.selling_price)), 0);
     totalInventoryValue += whValuation;
   } catch (e) {}
   
@@ -3410,32 +4234,60 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const expenses = await db.select<{amount: number}[]>('SELECT amount FROM expenses');
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
   
-  // Total Sales
+  // Total Sales (net_amount in sales is already adjusted for linked invoice returns)
   const sales = await db.select<{net_amount: number}[]>('SELECT net_amount FROM sales');
   let totalSales = sales.reduce((sum, s) => sum + s.net_amount, 0);
   
-  // Subtract returns from sales
-  const salesReturns = await db.select<{amount: number}[]>('SELECT amount FROM returns WHERE entity_type = $1', ['customer']);
-  const totalSalesReturns = salesReturns.reduce((sum, r) => sum + r.amount, 0);
-  totalSales -= totalSalesReturns;
+  // Deduct only standalone returns (unlinked to an invoice) to prevent double deduction
+  const standaloneSalesReturns = await db.select<{amount: number}[]>('SELECT amount FROM returns WHERE entity_type = $1 AND transaction_id IS NULL', ['customer']);
+  const totalStandaloneReturns = standaloneSalesReturns.reduce((sum, r) => sum + r.amount, 0);
+  totalSales -= totalStandaloneReturns;
   
-  // Gross Profit calculation based on profitTaxMode ('with_gst' vs 'without_gst')
-  const profitTaxMode = localStorage.getItem('profitTaxMode') || 'with_gst';
-  const taxDeduction = profitTaxMode === 'without_gst' ? ' - s.tax_amount' : '';
+  // Gross Profit calculation harmonized with DayBook
+  const rawProfitMode = localStorage.getItem('profitTaxMode');
+  const profitTaxMode = rawProfitMode === 'without_gst' ? 'without_gst' : 'with_gst';
   const profitData = await db.select<{profit: number}[]>(`
-    SELECT (s.net_amount${taxDeduction} - 
-      COALESCE((SELECT SUM(p.purchase_price * si.quantity) FROM sale_items si JOIN products p ON si.product_id = p.id WHERE si.sale_id = s.id), 0)
+    SELECT (
+      (CASE WHEN $1 = 'without_gst' THEN
+        COALESCE((
+          SELECT SUM(
+            (si.taxable_amount / NULLIF(si.quantity, 0)) * 
+            (si.quantity - COALESCE((
+              SELECT SUM(r.quantity) 
+              FROM returns r 
+              WHERE r.transaction_id = s.id AND r.product_id = si.product_id AND r.entity_type = 'customer'
+            ), 0))
+          )
+          FROM sale_items si 
+          WHERE si.sale_id = s.id
+        ), s.taxable_amount)
+      ELSE
+        s.net_amount
+      END) - 
+      COALESCE((
+        SELECT SUM(
+          COALESCE(CAST(json_extract(si.product_snapshot, '$.purchase_price') AS REAL), p.purchase_price, 0) * 
+          (si.quantity - COALESCE((
+            SELECT SUM(r.quantity) 
+            FROM returns r 
+            WHERE r.transaction_id = s.id AND r.product_id = si.product_id AND r.entity_type = 'customer'
+          ), 0))
+        )
+        FROM sale_items si 
+        JOIN products p ON si.product_id = p.id 
+        WHERE si.sale_id = s.id
+      ), 0)
     ) as profit 
     FROM sales s
-  `);
+  `, [profitTaxMode]);
   let grossProfit = profitData.reduce((sum, row) => sum + (row.profit || 0), 0);
   
-  // Deduct profit lost on returned items
+  // Deduct profit lost on standalone returns only
   const returnProfitLossData = await db.select<{loss: number}[]>(`
     SELECT COALESCE(SUM(r.amount - (r.quantity * p.purchase_price)), 0) as loss
     FROM returns r
     JOIN products p ON r.product_id = p.id
-    WHERE r.entity_type = 'customer'
+    WHERE r.entity_type = 'customer' AND r.transaction_id IS NULL
   `);
   const returnProfitLoss = returnProfitLossData[0]?.loss || 0;
   grossProfit -= returnProfitLoss;
@@ -3510,7 +4362,7 @@ export async function getDashboardExtraData(): Promise<DashboardExtraData> {
     SELECT day, COALESCE(SUM(amt), 0) as amount FROM (
       SELECT substr(date, 1, 10) as day, net_amount as amt FROM sales WHERE substr(date, 1, 10) BETWEEN $1 AND $2
       UNION ALL
-      SELECT substr(date, 1, 10) as day, -amount as amt FROM returns WHERE entity_type = 'customer' AND substr(date, 1, 10) BETWEEN $1 AND $2
+      SELECT substr(date, 1, 10) as day, -amount as amt FROM returns WHERE entity_type = 'customer' AND transaction_id IS NULL AND substr(date, 1, 10) BETWEEN $1 AND $2
     )
     GROUP BY day
     ORDER BY day ASC
@@ -3654,13 +4506,21 @@ export interface SalesReportItem {
   date: string;
   invoice_number: string | null;
   customer_name: string;
+  customer_gstin?: string | null;
   net_amount: number;
+  paid_amount?: number;
   tax_amount: number;
   discount: number;
   payment_method: string;
   status: string | null;
   products_bought: string;
   total_quantity: number;
+  total_returned_qty?: number;
+  total_amount?: number;
+  item_discount_amount?: number;
+  taxable_amount?: number;
+  round_off?: number;
+  tax_method?: string;
   source_type?: 'shop' | 'warehouse';
   source_warehouse_id?: number | null;
   source_warehouse_name?: string | null;
@@ -3669,10 +4529,13 @@ export interface SalesReportItem {
 export async function getSalesReport(startDate: string, endDate: string): Promise<SalesReportItem[]> {
   const db = await getDb();
   return await db.select(
-    `SELECT s.id, s.date, s.invoice_number, c.name as customer_name, s.net_amount, s.tax_amount, s.discount, s.payment_method, s.status,
-     s.source_type, s.source_warehouse_id, w.name as source_warehouse_name,
+    `SELECT s.id, s.date, s.invoice_number, c.name as customer_name, c.gstin as customer_gstin,
+            s.total_amount, s.item_discount_amount, s.taxable_amount, s.round_off, s.tax_method,
+            s.net_amount, COALESCE(s.paid_amount, 0) as paid_amount, s.tax_amount, s.discount, s.payment_method, s.status,
+            s.source_type, s.source_warehouse_id, w.name as source_warehouse_name,
      (SELECT GROUP_CONCAT(COALESCE(JSON_EXTRACT(si.product_snapshot, '$.name'), p.name, 'Item') || ' x' || si.quantity || ' (₹' || CAST(si.unit_price AS TEXT) || ' / ' || COALESCE(si.unit, p.unit, 'Nos') || ')', char(10)) FROM sale_items si LEFT JOIN products p ON si.product_id = p.id WHERE si.sale_id = s.id) as products_bought,
-     (SELECT SUM(si.quantity) FROM sale_items si WHERE si.sale_id = s.id) as total_quantity
+     (SELECT SUM(si.quantity) FROM sale_items si WHERE si.sale_id = s.id) as total_quantity,
+     (SELECT COALESCE(SUM(r.quantity), 0) FROM returns r WHERE r.transaction_id = s.id AND r.entity_type = 'customer') as total_returned_qty
      FROM sales s 
      LEFT JOIN customers c ON s.customer_id = c.id 
      LEFT JOIN warehouses w ON s.source_warehouse_id = w.id
@@ -3686,13 +4549,23 @@ export interface PurchaseReportItem {
   id: number;
   date: string;
   supplier_name: string;
+  supplier_gstin?: string | null;
   invoice_number: string;
   supplier_invoice_date: string | null;
+  total_amount?: number;
+  item_discount_amount?: number;
+  taxable_amount?: number;
+  round_off?: number;
+  tax_method?: string;
+  discount?: number;
   net_amount: number;
+  paid_amount?: number;
   tax_amount: number;
+  payment_method?: string;
   status: string;
   products_bought: string;
   total_quantity: number;
+  total_returned_qty?: number;
   destination_type?: 'shop' | 'warehouse';
   destination_warehouse_id?: number | null;
   destination_warehouse_name?: string | null;
@@ -3701,11 +4574,14 @@ export interface PurchaseReportItem {
 export async function getPurchaseReport(startDate: string, endDate: string): Promise<PurchaseReportItem[]> {
   const db = await getDb();
   return await db.select(
-    `SELECT p.id, p.date, s.name as supplier_name, p.invoice_number, p.supplier_invoice_date, p.net_amount, p.tax_amount, p.status,
-     p.destination_type, p.destination_warehouse_id, w.name as destination_warehouse_name,
+    `SELECT p.id, p.date, s.name as supplier_name, s.gstin as supplier_gstin, p.invoice_number, p.supplier_invoice_date,
+            p.total_amount, p.item_discount_amount, p.taxable_amount, p.round_off, p.tax_method, p.discount,
+            p.net_amount, COALESCE(p.paid_amount, 0) as paid_amount, p.tax_amount, p.payment_method, p.status,
+            p.destination_type, p.destination_warehouse_id, w.name as destination_warehouse_name,
      (SELECT GROUP_CONCAT(pr.name || ' x' || pi.quantity || ' (₹' || CAST(pi.purchase_rate AS TEXT) || ' / ' || COALESCE(pi.unit, pr.unit) || ')', char(10)) 
       FROM purchase_items pi JOIN products pr ON pi.product_id = pr.id WHERE pi.purchase_id = p.id) as products_bought,
-     (SELECT SUM(pi.quantity) FROM purchase_items pi WHERE pi.purchase_id = p.id) as total_quantity
+     (SELECT SUM(pi.quantity) FROM purchase_items pi WHERE pi.purchase_id = p.id) as total_quantity,
+     (SELECT COALESCE(SUM(r.quantity), 0) FROM returns r WHERE r.transaction_id = p.id AND r.entity_type = 'supplier') as total_returned_qty
      FROM purchases p 
      LEFT JOIN suppliers s ON p.supplier_id = s.id 
      LEFT JOIN warehouses w ON p.destination_warehouse_id = w.id
@@ -3731,14 +4607,14 @@ export async function getProductWiseSalesReport(startDate: string, endDate: stri
     `SELECT 
        p.id as product_id, 
        p.name as product_name, 
-       p.model,
+       p.model, 
        MAX(COALESCE(si.unit, p.unit)) as unit,
        COALESCE(SUM(si.quantity), 0) - COALESCE((
          SELECT SUM(r.quantity) 
          FROM returns r 
          WHERE r.product_id = p.id AND r.entity_type = 'customer' AND date(r.date) BETWEEN date($1) AND date($2)
        ), 0) as total_quantity,
-       COALESCE(SUM(si.quantity * si.unit_price), 0) - COALESCE((
+       COALESCE(SUM(COALESCE(si.net_amount, si.quantity * si.unit_price)), 0) - COALESCE((
          SELECT SUM(r.amount) 
          FROM returns r 
          WHERE r.product_id = p.id AND r.entity_type = 'customer' AND date(r.date) BETWEEN date($1) AND date($2)
@@ -3767,24 +4643,43 @@ export async function getExpenseReport(startDate: string, endDate: string): Prom
 export async function getDayBookProfitAndExpenses(startDate: string, endDate: string) {
   const db = await getDb();
   
-  const profitTaxMode = localStorage.getItem('profitTaxMode') || 'with_gst';
-  const taxDeduction = profitTaxMode === 'without_gst' ? ' - s.tax_amount' : '';
+  const rawProfitMode = localStorage.getItem('profitTaxMode');
+  const profitTaxMode = rawProfitMode === 'without_gst' ? 'without_gst' : 'with_gst';
   const profitData = await db.select<{profit: number}[]>(`
-    SELECT (s.net_amount${taxDeduction} - 
+    SELECT (
+      (CASE WHEN $1 = 'without_gst' THEN
+        COALESCE((
+          SELECT SUM(
+            (si.taxable_amount / NULLIF(si.quantity, 0)) * 
+            (si.quantity - COALESCE((
+              SELECT SUM(r.quantity) 
+              FROM returns r 
+              WHERE r.transaction_id = s.id AND r.product_id = si.product_id AND r.entity_type = 'customer'
+            ), 0))
+          )
+          FROM sale_items si 
+          WHERE si.sale_id = s.id
+        ), s.taxable_amount)
+      ELSE
+        s.net_amount
+      END) - 
       COALESCE((
-        SELECT SUM(p.purchase_price * (si.quantity - COALESCE((
-          SELECT SUM(r.quantity) 
-          FROM returns r 
-          WHERE r.transaction_id = s.id AND r.product_id = si.product_id AND r.entity_type = 'customer'
-        ), 0)))
+        SELECT SUM(
+          COALESCE(CAST(json_extract(si.product_snapshot, '$.purchase_price') AS REAL), p.purchase_price, 0) * 
+          (si.quantity - COALESCE((
+            SELECT SUM(r.quantity) 
+            FROM returns r 
+            WHERE r.transaction_id = s.id AND r.product_id = si.product_id AND r.entity_type = 'customer'
+          ), 0))
+        )
         FROM sale_items si 
         JOIN products p ON si.product_id = p.id 
         WHERE si.sale_id = s.id
       ), 0)
     ) as profit 
     FROM sales s
-    WHERE date(s.date) BETWEEN date($1) AND date($2)
-  `, [startDate, endDate]);
+    WHERE date(s.date) BETWEEN date($2) AND date($3)
+  `, [profitTaxMode, startDate, endDate]);
   
   let grossProfit = profitData.reduce((sum, row) => sum + (row.profit || 0), 0);
 
@@ -3834,13 +4729,13 @@ export async function getInventoryValuationReport(): Promise<InventoryValuationI
        p.hsn_code, 
        COALESCE(g.name, 'General') as group_name, 
        COALESCE(b.name, 'Unbranded') as brand_name, 
-       p.stock_quantity, 
+       (p.stock_quantity + COALESCE((SELECT SUM(quantity) FROM warehouse_items WHERE product_id = p.id), 0)) as stock_quantity, 
        COALESCE(p.unit, 'Nos') as unit, 
-       p.purchase_price, 
-       p.selling_price, 
+       COALESCE(p.purchase_price, 0) as purchase_price, 
+       COALESCE(p.selling_price, 0) as selling_price, 
        COALESCE(p.min_stock, 5) as min_stock,
-       (p.stock_quantity * p.purchase_price) as stock_valuation,
-       (p.stock_quantity * p.selling_price) as retail_valuation
+       ((p.stock_quantity + COALESCE((SELECT SUM(quantity) FROM warehouse_items WHERE product_id = p.id), 0)) * COALESCE(p.purchase_price, 0)) as stock_valuation,
+       ((p.stock_quantity + COALESCE((SELECT SUM(quantity) FROM warehouse_items WHERE product_id = p.id), 0)) * COALESCE(p.selling_price, 0)) as retail_valuation
      FROM products p
      LEFT JOIN item_groups g ON p.group_id = g.id
      LEFT JOIN brands b ON p.brand_id = b.id
@@ -3916,6 +4811,10 @@ export interface TransactionDetail {
   entity_name: string;
   customer_snapshot?: string | null;
   supplier_snapshot?: string | null;
+  total_amount?: number;
+  item_discount_amount?: number;
+  taxable_amount?: number;
+  round_off?: number;
   net_amount?: number;
   tax_amount?: number;
   discount?: number;
@@ -3927,7 +4826,12 @@ export interface TransactionDetail {
   source_type?: 'shop' | 'warehouse';
   source_warehouse_id?: number | null;
   source_warehouse_name?: string | null;
+  discount_type?: 'amount' | 'percentage';
+  discount_percent?: number;
+  tax_method?: 'exclusive' | 'inclusive';
+  payment_method?: string | null;
   items: {
+    id?: number;
     product_id: number;
     name: string;
     model: string | null;
@@ -3939,16 +4843,23 @@ export interface TransactionDetail {
     cgst_percentage: number;
     sgst_percentage: number;
     gst_percentage: number;
+    taxable_amount?: number;
     tax?: number;
+    net_amount?: number;
     source_type?: 'shop' | 'warehouse' | null;
     source_warehouse_name?: string | null;
+    discount?: number;
+    discount_type?: 'amount' | 'percentage';
+    discount_percent?: number;
   }[];
 }
 
 export async function getSaleDetails(query: string): Promise<TransactionDetail[]> {
   const db = await getDb();
-  const sales = await db.select<{id: number, date: string, invoice_number: string, customer_id: number, customer_name: string, customer_snapshot: string | null, net_amount: number, tax_amount: number, discount: number, status: string | null, paid_amount: number, source_type: 'shop' | 'warehouse' | null, source_warehouse_id: number | null, source_warehouse_name: string | null}[]>(
-    `SELECT s.id, s.date, s.invoice_number, s.customer_id, s.customer_snapshot, c.name as customer_name, s.net_amount, s.tax_amount, s.discount, s.status, s.paid_amount,
+  const sales = await db.select<{id: number, date: string, invoice_number: string, customer_id: number, customer_name: string, customer_snapshot: string | null, total_amount?: number, item_discount_amount?: number, taxable_amount?: number, round_off?: number, tax_method?: 'exclusive' | 'inclusive' | null, discount_type?: 'amount' | 'percentage' | null, discount_percent?: number | null, net_amount: number, tax_amount: number, discount: number, status: string | null, paid_amount: number, source_type: 'shop' | 'warehouse' | null, source_warehouse_id: number | null, source_warehouse_name: string | null}[]>(
+    `SELECT s.id, s.date, s.invoice_number, s.customer_id, s.customer_snapshot, c.name as customer_name,
+            s.total_amount, s.item_discount_amount, s.taxable_amount, s.round_off, s.tax_method,
+            s.discount_type, s.discount_percent, s.net_amount, s.tax_amount, s.discount, s.status, s.paid_amount,
             s.source_type, s.source_warehouse_id, w.name as source_warehouse_name
      FROM sales s 
      LEFT JOIN customers c ON s.customer_id = c.id
@@ -3959,32 +4870,62 @@ export async function getSaleDetails(query: string): Promise<TransactionDetail[]
   
   const results: TransactionDetail[] = [];
   for (const s of sales) {
-    const items = await db.select<{product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, tax: number, product_snapshot: string | null, returned_quantity: number}[]>(
-      `SELECT si.product_id, p.name, p.model, si.quantity, si.unit_price, si.unit, p.hsn_code, p.cgst_percentage, p.sgst_percentage, p.gst_percentage, COALESCE(si.tax, 0) as tax, si.product_snapshot,
-       COALESCE((SELECT SUM(r.quantity) FROM returns r WHERE r.transaction_id = si.sale_id AND r.product_id = si.product_id AND r.entity_type = 'customer'), 0) as returned_quantity
+    const items = await db.select<{id: number, product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, taxable_amount?: number, tax: number, net_amount?: number, discount?: number, discount_type?: 'amount' | 'percentage', discount_percent?: number, product_snapshot: string | null}[]>(
+      `SELECT si.id as id, si.product_id, p.name, p.model, si.quantity, si.unit_price, si.unit, p.hsn_code,
+              COALESCE(si.cgst_percentage, p.cgst_percentage, 0) as cgst_percentage,
+              COALESCE(si.sgst_percentage, p.sgst_percentage, 0) as sgst_percentage,
+              COALESCE(si.gst_percentage, p.gst_percentage, 0) as gst_percentage,
+              COALESCE(si.taxable_amount, 0) as taxable_amount,
+              COALESCE(si.tax, 0) as tax,
+              COALESCE(si.net_amount, 0) as net_amount,
+              COALESCE(si.discount, 0) as discount,
+              COALESCE(si.discount_type, 'percentage') as discount_type,
+              COALESCE(si.discount_percent, 0) as discount_percent,
+              si.product_snapshot
        FROM sale_items si LEFT JOIN products p ON si.product_id = p.id
        WHERE si.sale_id = $1`,
       [s.id]
     );
+
+    const returnTotals = await db.select<{ product_id: number; total_returned: number }[]>(
+      `SELECT product_id, SUM(quantity) as total_returned FROM returns WHERE transaction_id = $1 AND entity_type = 'customer' GROUP BY product_id`,
+      [s.id]
+    );
+    const retMap: Record<number, number> = {};
+    for (const r of returnTotals) {
+      retMap[r.product_id] = Number(r.total_returned || 0);
+    }
+    const remainingReturns = { ...retMap };
     
     const mappedItems = items.map(item => {
+      let snap: any = {};
       if (item.product_snapshot) {
         try {
-          const snap = JSON.parse(item.product_snapshot);
-          return { 
-            ...item, 
-            name: snap.name, 
-            model: snap.model, 
-            hsn_code: snap.hsn_code, 
-            gst_percentage: snap.gst_percentage, 
-            cgst_percentage: snap.cgst_percentage, 
-            sgst_percentage: snap.sgst_percentage,
-            source_type: snap.source_type || s.source_type || 'shop',
-            source_warehouse_name: snap.source_warehouse_name || s.source_warehouse_name || 'Main Shop'
-          };
+          snap = JSON.parse(item.product_snapshot);
         } catch (e) {}
       }
-      return item;
+      const availRet = remainingReturns[item.product_id] || 0;
+      const allocatedRet = Math.min(Number(item.quantity || 0), availRet);
+      remainingReturns[item.product_id] = Math.max(0, availRet - allocatedRet);
+
+      return { 
+        ...item, 
+        name: snap.name || item.name, 
+        model: snap.model || item.model, 
+        hsn_code: snap.hsn_code || item.hsn_code, 
+        gst_percentage: item.gst_percentage ?? snap.gst_percentage ?? 0, 
+        cgst_percentage: item.cgst_percentage ?? snap.cgst_percentage ?? 0, 
+        sgst_percentage: item.sgst_percentage ?? snap.sgst_percentage ?? 0,
+        taxable_amount: item.taxable_amount ?? snap.taxable_amount ?? 0,
+        tax: item.tax ?? snap.tax ?? 0,
+        net_amount: item.net_amount ?? snap.net_amount ?? 0,
+        discount: item.discount ?? snap.discount ?? 0,
+        discount_type: (item.discount_type ?? snap.discount_type ?? 'percentage') as 'amount' | 'percentage',
+        discount_percent: item.discount_percent ?? snap.discount_percent ?? 0,
+        source_type: snap.source_type || s.source_type || 'shop',
+        source_warehouse_name: snap.source_warehouse_name || s.source_warehouse_name || 'Main Shop',
+        returned_quantity: allocatedRet
+      };
     });
 
     results.push({
@@ -3994,6 +4935,13 @@ export async function getSaleDetails(query: string): Promise<TransactionDetail[]
       entity_id: s.customer_id,
       entity_name: s.customer_snapshot ? JSON.parse(s.customer_snapshot).name : (s.customer_name || 'Walk-in Customer'),
       customer_snapshot: s.customer_snapshot,
+      total_amount: s.total_amount,
+      item_discount_amount: s.item_discount_amount,
+      taxable_amount: s.taxable_amount,
+      round_off: s.round_off,
+      tax_method: (s.tax_method as 'exclusive' | 'inclusive') || 'exclusive',
+      discount_type: (s.discount_type as 'amount' | 'percentage') || 'percentage',
+      discount_percent: s.discount_percent || 0,
       net_amount: s.net_amount,
       tax_amount: s.tax_amount,
       discount: s.discount,
@@ -4010,8 +4958,10 @@ export async function getSaleDetails(query: string): Promise<TransactionDetail[]
 
 export async function getPurchaseDetails(query: string): Promise<TransactionDetail[]> {
   const db = await getDb();
-  const purchases = await db.select<{id: number, date: string, invoice_number: string, supplier_id: number, supplier_name: string, supplier_snapshot: string | null, net_amount: number, tax_amount: number, discount: number, status: string | null, destination_type: 'shop' | 'warehouse' | null, destination_warehouse_id: number | null, destination_warehouse_name: string | null}[]>(
-    `SELECT p.id, p.date, p.invoice_number, p.supplier_id, p.supplier_snapshot, s.name as supplier_name, p.net_amount, p.tax_amount, p.discount, p.status,
+  const purchases = await db.select<{id: number, date: string, invoice_number: string, supplier_id: number, supplier_name: string, supplier_snapshot: string | null, total_amount?: number, item_discount_amount?: number, taxable_amount?: number, round_off?: number, tax_method?: 'exclusive' | 'inclusive' | null, discount_type?: 'amount' | 'percentage' | null, discount_percent?: number | null, net_amount: number, tax_amount: number, discount: number, status: string | null, paid_amount?: number, destination_type: 'shop' | 'warehouse' | null, destination_warehouse_id: number | null, destination_warehouse_name: string | null}[]>(
+    `SELECT p.id, p.date, p.invoice_number, p.supplier_id, p.supplier_snapshot, s.name as supplier_name,
+            p.total_amount, p.item_discount_amount, p.taxable_amount, p.round_off, p.tax_method,
+            p.discount_type, p.discount_percent, p.net_amount, p.tax_amount, p.discount, p.status, p.paid_amount,
             p.destination_type, p.destination_warehouse_id, w.name as destination_warehouse_name
      FROM purchases p 
      LEFT JOIN suppliers s ON p.supplier_id = s.id
@@ -4022,32 +4972,62 @@ export async function getPurchaseDetails(query: string): Promise<TransactionDeta
   
   const results: TransactionDetail[] = [];
   for (const p of purchases) {
-    const items = await db.select<{product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, tax: number, product_snapshot: string | null, returned_quantity: number}[]>(
-      `SELECT pi.product_id, pr.name, pr.model, pi.quantity, pi.purchase_rate as unit_price, pi.unit, pr.hsn_code, pr.cgst_percentage, pr.sgst_percentage, pr.gst_percentage, COALESCE(pi.tax, 0) as tax, pi.product_snapshot,
-       COALESCE((SELECT SUM(r.quantity) FROM returns r WHERE r.transaction_id = pi.purchase_id AND r.product_id = pi.product_id AND r.entity_type = 'supplier'), 0) as returned_quantity
+    const items = await db.select<{id: number, product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, taxable_amount?: number, tax: number, net_amount?: number, discount?: number, discount_type?: 'amount' | 'percentage', discount_percent?: number, product_snapshot: string | null}[]>(
+      `SELECT pi.id as id, pi.product_id, pr.name, pr.model, pi.quantity, pi.purchase_rate as unit_price, pi.unit, pr.hsn_code,
+              COALESCE(pi.cgst_percentage, pr.cgst_percentage, 0) as cgst_percentage,
+              COALESCE(pi.sgst_percentage, pr.sgst_percentage, 0) as sgst_percentage,
+              COALESCE(pi.gst_percentage, pr.gst_percentage, 0) as gst_percentage,
+              COALESCE(pi.taxable_amount, 0) as taxable_amount,
+              COALESCE(pi.tax, 0) as tax,
+              COALESCE(pi.net_amount, 0) as net_amount,
+              COALESCE(pi.discount, 0) as discount,
+              COALESCE(pi.discount_type, 'percentage') as discount_type,
+              COALESCE(pi.discount_percent, 0) as discount_percent,
+              pi.product_snapshot
        FROM purchase_items pi JOIN products pr ON pi.product_id = pr.id
        WHERE pi.purchase_id = $1`,
       [p.id]
     );
 
+    const returnTotals = await db.select<{ product_id: number; total_returned: number }[]>(
+      `SELECT product_id, SUM(quantity) as total_returned FROM returns WHERE transaction_id = $1 AND entity_type = 'supplier' GROUP BY product_id`,
+      [p.id]
+    );
+    const retMap: Record<number, number> = {};
+    for (const r of returnTotals) {
+      retMap[r.product_id] = Number(r.total_returned || 0);
+    }
+    const remainingReturns = { ...retMap };
+
     const mappedItems = items.map(item => {
+      let snap: any = {};
       if (item.product_snapshot) {
         try {
-          const snap = JSON.parse(item.product_snapshot);
-          return { 
-            ...item, 
-            name: snap.name, 
-            model: snap.model, 
-            hsn_code: snap.hsn_code, 
-            gst_percentage: snap.gst_percentage, 
-            cgst_percentage: snap.cgst_percentage, 
-            sgst_percentage: snap.sgst_percentage,
-            source_type: p.destination_type,
-            source_warehouse_name: p.destination_warehouse_name || 'Main Shop'
-          };
+          snap = JSON.parse(item.product_snapshot);
         } catch (e) {}
       }
-      return item;
+      const availRet = remainingReturns[item.product_id] || 0;
+      const allocatedRet = Math.min(Number(item.quantity || 0), availRet);
+      remainingReturns[item.product_id] = Math.max(0, availRet - allocatedRet);
+
+      return { 
+        ...item, 
+        name: snap.name || item.name, 
+        model: snap.model || item.model, 
+        hsn_code: snap.hsn_code || item.hsn_code, 
+        gst_percentage: item.gst_percentage ?? snap.gst_percentage ?? 0, 
+        cgst_percentage: item.cgst_percentage ?? snap.cgst_percentage ?? 0, 
+        sgst_percentage: item.sgst_percentage ?? snap.sgst_percentage ?? 0,
+        taxable_amount: item.taxable_amount ?? snap.taxable_amount ?? 0,
+        tax: item.tax ?? snap.tax ?? 0,
+        net_amount: item.net_amount ?? snap.net_amount ?? 0,
+        discount: item.discount ?? snap.discount ?? 0,
+        discount_type: (item.discount_type ?? snap.discount_type ?? 'percentage') as 'amount' | 'percentage',
+        discount_percent: item.discount_percent ?? snap.discount_percent ?? 0,
+        source_type: p.destination_type,
+        source_warehouse_name: p.destination_warehouse_name || 'Main Shop',
+        returned_quantity: allocatedRet
+      };
     });
 
     results.push({
@@ -4057,9 +5037,17 @@ export async function getPurchaseDetails(query: string): Promise<TransactionDeta
       entity_id: p.supplier_id,
       entity_name: p.supplier_snapshot ? JSON.parse(p.supplier_snapshot).name : p.supplier_name,
       supplier_snapshot: p.supplier_snapshot,
+      total_amount: p.total_amount,
+      item_discount_amount: p.item_discount_amount,
+      taxable_amount: p.taxable_amount,
+      round_off: p.round_off,
+      tax_method: (p.tax_method as 'exclusive' | 'inclusive') || 'exclusive',
+      discount_type: (p.discount_type as 'amount' | 'percentage') || 'percentage',
+      discount_percent: p.discount_percent || 0,
       net_amount: p.net_amount,
       tax_amount: p.tax_amount,
       discount: p.discount,
+      paid_amount: p.paid_amount || 0,
       status: p.status,
       destination_type: (p.destination_type as 'shop' | 'warehouse') || 'shop',
       destination_warehouse_id: p.destination_warehouse_id,
@@ -4072,9 +5060,12 @@ export async function getPurchaseDetails(query: string): Promise<TransactionDeta
 
 export async function getPurchaseById(id: number): Promise<TransactionDetail | null> {
   const db = await getDb();
-  const purchases = await db.select<{id: number, date: string, invoice_number: string, supplier_id: number, supplier_name: string, supplier_snapshot: string | null, net_amount: number, tax_amount: number, discount: number, paid_amount: number, status: string | null, destination_type: 'shop' | 'warehouse' | null, destination_warehouse_id: number | null, destination_warehouse_name: string | null}[]>(
-    `SELECT p.id, p.date, p.invoice_number, p.supplier_id, p.supplier_snapshot, s.name as supplier_name, p.net_amount, p.tax_amount, p.discount, p.paid_amount, p.status,
-            p.destination_type, p.destination_warehouse_id, w.name as destination_warehouse_name
+  const purchases = await db.select<{id: number, date: string, invoice_number: string, supplier_id: number, supplier_name: string, supplier_snapshot: string | null, total_amount?: number, item_discount_amount?: number, taxable_amount?: number, round_off?: number, net_amount: number, tax_amount: number, discount: number, paid_amount: number, status: string | null, destination_type: 'shop' | 'warehouse' | null, destination_warehouse_id: number | null, destination_warehouse_name: string | null, discount_type?: 'amount' | 'percentage' | null, discount_percent?: number | null, tax_method?: 'exclusive' | 'inclusive' | null, payment_method?: string | null}[]>(
+    `SELECT p.id, p.date, p.invoice_number, p.supplier_id, p.supplier_snapshot, s.name as supplier_name,
+            p.total_amount, p.item_discount_amount, p.taxable_amount, p.round_off,
+            p.net_amount, p.tax_amount, p.discount, p.paid_amount, p.status,
+            p.destination_type, p.destination_warehouse_id, w.name as destination_warehouse_name,
+            p.discount_type, p.discount_percent, p.tax_method, p.payment_method
      FROM purchases p 
      LEFT JOIN suppliers s ON p.supplier_id = s.id
      LEFT JOIN warehouses w ON p.destination_warehouse_id = w.id
@@ -4085,22 +5076,67 @@ export async function getPurchaseById(id: number): Promise<TransactionDetail | n
   if (purchases.length === 0) return null;
   const p = purchases[0];
 
-  const items = await db.select<{product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, product_snapshot: string | null, returned_quantity: number}[]>(
-    `SELECT pi.product_id, pr.name, pr.model, pi.quantity, pi.purchase_rate as unit_price, pi.unit, pr.hsn_code, pr.cgst_percentage, pr.sgst_percentage, pr.gst_percentage, pi.product_snapshot,
-     COALESCE((SELECT SUM(r.quantity) FROM returns r WHERE r.transaction_id = pi.purchase_id AND r.product_id = pi.product_id AND r.entity_type = 'supplier'), 0) as returned_quantity
-     FROM purchase_items pi JOIN products pr ON pi.product_id = pr.id
+  const items = await db.select<{id: number, product_id: number, name: string, model: string, quantity: number, unit_price: number, unit: string, hsn_code: string | null, taxable_amount: number, tax: number, net_amount: number, cgst_percentage: number, sgst_percentage: number, gst_percentage: number, product_snapshot: string | null, discount?: number, discount_type?: 'amount' | 'percentage', discount_percent?: number}[]>(
+    `SELECT pi.id as id, pi.product_id, COALESCE(pr.name, '') as name, COALESCE(pr.model, '') as model, pi.quantity, pi.purchase_rate as unit_price, pi.unit,
+     COALESCE(pi.taxable_amount, 0) as taxable_amount, COALESCE(pi.tax, 0) as tax, COALESCE(pi.net_amount, 0) as net_amount,
+     COALESCE(pi.cgst_percentage, pr.cgst_percentage, 0) as cgst_percentage,
+     COALESCE(pi.sgst_percentage, pr.sgst_percentage, 0) as sgst_percentage,
+     COALESCE(pi.gst_percentage, pr.gst_percentage, 0) as gst_percentage,
+     pr.hsn_code, pi.product_snapshot,
+     COALESCE(pi.discount, 0) as discount, COALESCE(pi.discount_type, 'percentage') as discount_type, COALESCE(pi.discount_percent, 0) as discount_percent
+     FROM purchase_items pi LEFT JOIN products pr ON pi.product_id = pr.id
      WHERE pi.purchase_id = $1`,
     [p.id]
   );
 
+  const returnTotals = await db.select<{ product_id: number; total_returned: number }[]>(
+    `SELECT product_id, SUM(quantity) as total_returned FROM returns WHERE transaction_id = $1 AND entity_type = 'supplier' GROUP BY product_id`,
+    [p.id]
+  );
+  const retMap: Record<number, number> = {};
+  for (const r of returnTotals) {
+    retMap[r.product_id] = Number(r.total_returned || 0);
+  }
+  const remainingReturns = { ...retMap };
+
   const mappedItems = items.map(item => {
+    let snap: any = {};
     if (item.product_snapshot) {
       try {
-        const snap = JSON.parse(item.product_snapshot);
-        return { ...item, name: snap.name, model: snap.model, hsn_code: snap.hsn_code, gst_percentage: snap.gst_percentage, cgst_percentage: snap.cgst_percentage, sgst_percentage: snap.sgst_percentage };
+        snap = JSON.parse(item.product_snapshot);
       } catch (e) {}
     }
-    return item;
+    const availRet = remainingReturns[item.product_id] || 0;
+    const allocatedRet = Math.min(Number(item.quantity || 0), availRet);
+    remainingReturns[item.product_id] = Math.max(0, availRet - allocatedRet);
+
+    const lineGross = Number(item.unit_price || 0) * Number(item.quantity || 0);
+    let discPct = item.discount_percent ?? snap.discount_percent ?? 0;
+    if (discPct > 100 || (discPct <= 0 && Number(item.discount || 0) > 0)) {
+      const dVal = Number(item.discount || discPct);
+      if (lineGross > 0 && dVal > 0) {
+        discPct = Math.min(100, Math.max(0, Number(((dVal / lineGross) * 100).toFixed(2))));
+      } else {
+        discPct = Math.min(100, Math.max(0, discPct));
+      }
+    }
+
+    return {
+      ...item,
+      name: snap.name || item.name,
+      model: snap.model ?? item.model,
+      hsn_code: snap.hsn_code ?? item.hsn_code,
+      gst_percentage: item.gst_percentage || snap.gst_percentage || 0,
+      cgst_percentage: item.cgst_percentage || snap.cgst_percentage || 0,
+      sgst_percentage: item.sgst_percentage || snap.sgst_percentage || 0,
+      taxable_amount: item.taxable_amount || snap.taxable_amount || 0,
+      tax: item.tax || snap.tax || 0,
+      net_amount: item.net_amount || snap.net_amount || 0,
+      discount: item.discount ?? snap.discount ?? 0,
+      discount_type: item.discount_type ?? snap.discount_type ?? 'percentage',
+      discount_percent: discPct,
+      returned_quantity: allocatedRet
+    };
   });
 
   return {
@@ -4110,6 +5146,10 @@ export async function getPurchaseById(id: number): Promise<TransactionDetail | n
     entity_id: p.supplier_id,
     entity_name: p.supplier_snapshot ? JSON.parse(p.supplier_snapshot).name : p.supplier_name,
     supplier_snapshot: p.supplier_snapshot,
+    total_amount: p.total_amount,
+    item_discount_amount: p.item_discount_amount || 0,
+    taxable_amount: p.taxable_amount || 0,
+    round_off: p.round_off || 0,
     net_amount: p.net_amount,
     tax_amount: p.tax_amount,
     discount: p.discount,
@@ -4118,6 +5158,10 @@ export async function getPurchaseById(id: number): Promise<TransactionDetail | n
     destination_type: (p.destination_type as 'shop' | 'warehouse') || 'shop',
     destination_warehouse_id: p.destination_warehouse_id,
     destination_warehouse_name: p.destination_warehouse_name,
+    discount_type: (p.discount_type as 'amount' | 'percentage') || 'percentage',
+    discount_percent: p.discount_percent || 0,
+    tax_method: (p.tax_method as 'exclusive' | 'inclusive') || 'exclusive',
+    payment_method: p.payment_method || 'Cash',
     items: mappedItems
   };
 }
@@ -4198,68 +5242,103 @@ export function calculateNextMarch31Expiry(): string {
   return expiry.toISOString();
 }
 
+export function calculateTrial15DaysExpiry(): string {
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + 15);
+  expiry.setHours(23, 59, 59, 999);
+  return expiry.toISOString();
+}
+
+export interface LicenseInfo {
+  isActivated: boolean;
+  isTrial: boolean;
+  daysRemaining: number;
+  expiryDate: string | null;
+  hasUsedTrial: boolean;
+  clockTampered: boolean;
+  tamperReason?: string;
+}
+
+export async function getLicenseInfo(): Promise<LicenseInfo> {
+  const tamper = await checkClockTampering();
+  const hasUsedTrial = localStorage.getItem('has_used_trial') === 'true';
+  const storedType = (localStorage.getItem('license_type') as 'full' | 'trial') || 'full';
+  const storedExpiry = localStorage.getItem('activation_expiry');
+
+  if (tamper.isTampered) {
+    return {
+      isActivated: false,
+      isTrial: storedType === 'trial',
+      daysRemaining: 0,
+      expiryDate: storedExpiry,
+      hasUsedTrial,
+      clockTampered: true,
+      tamperReason: tamper.reason
+    };
+  }
+
+  let expiryStr = storedExpiry;
+  let licenseType = storedType;
+  let usedTrial = hasUsedTrial;
+
+  try {
+    const db = await getDb();
+    if (!expiryStr) {
+      const res = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
+      if (res.length > 0) {
+        expiryStr = res[0].value;
+        localStorage.setItem('activation_expiry', expiryStr);
+      }
+    }
+    const typeRes = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['license_type']);
+    if (typeRes.length > 0) {
+      licenseType = typeRes[0].value as 'full' | 'trial';
+      localStorage.setItem('license_type', licenseType);
+    }
+    const trialRes = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['has_used_trial']);
+    if (trialRes.length > 0 && trialRes[0].value === 'true') {
+      usedTrial = true;
+      localStorage.setItem('has_used_trial', 'true');
+    }
+  } catch (e) {}
+
+  if (!expiryStr) {
+    return {
+      isActivated: false,
+      isTrial: false,
+      daysRemaining: 0,
+      expiryDate: null,
+      hasUsedTrial: usedTrial,
+      clockTampered: false
+    };
+  }
+
+  const expiry = new Date(expiryStr);
+  const now = new Date();
+  const diffTime = expiry.getTime() - now.getTime();
+  const daysRemaining = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+  const isValid = diffTime > 0;
+
+  return {
+    isActivated: isValid,
+    isTrial: licenseType === 'trial',
+    daysRemaining,
+    expiryDate: expiryStr,
+    hasUsedTrial: usedTrial,
+    clockTampered: false
+  };
+}
+
 export async function isAppActivated(): Promise<boolean> {
   try {
-    // 0. Check clock tampering (Windows files & DB transaction history)
-    const tamper = await checkClockTampering();
-    if (tamper.isTampered) {
-      console.warn("Clock tampering detected:", tamper.reason);
-      (window as any).__clockTamperReason = tamper.reason;
+    const info = await getLicenseInfo();
+    if (info.clockTampered) {
+      (window as any).__clockTamperReason = info.tamperReason;
       return false;
     } else {
       (window as any).__clockTamperReason = null;
     }
-
-    // 1. Check machine-level license in localStorage first
-    const storedExpiry = localStorage.getItem('activation_expiry');
-    if (storedExpiry) {
-      const expiryDate = new Date(storedExpiry);
-      if (expiryDate.getTime() > Date.now()) {
-        return true;
-      }
-    }
-
-    // 2. Check the active database settings table
-    const db = await getDb();
-    const result = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
-    if (result.length > 0) {
-      const expiryDate = new Date(result[0].value);
-      const isValid = expiryDate.getTime() > Date.now();
-      if (isValid) {
-        localStorage.setItem('activation_expiry', result[0].value);
-        return true;
-      }
-    }
-    
-    // 3. Fallback for legacy 'is_activated' key
-    const legacyResult = await db.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['is_activated']);
-    if (legacyResult.length > 0 && legacyResult[0].value === 'true') {
-      return true;
-    }
-
-    // 4. If current DB is a secondary company, check the primary database (inventory.db)
-    const activeCompDb = getActiveCompanyDbName();
-    if (activeCompDb !== 'sqlite:inventory.db') {
-      try {
-        const defaultDb = await Database.load('sqlite:inventory.db');
-        const defResult = await defaultDb.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['activation_expiry']);
-        if (defResult.length > 0) {
-          const expiryDate = new Date(defResult[0].value);
-          const isValid = expiryDate.getTime() > Date.now();
-          if (isValid) {
-            localStorage.setItem('activation_expiry', defResult[0].value);
-            await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', defResult[0].value]);
-            return true;
-          }
-        }
-        const defLegacy = await defaultDb.select<{value: string}[]>('SELECT value FROM settings WHERE key = $1', ['is_activated']);
-        if (defLegacy.length > 0 && defLegacy[0].value === 'true') {
-          return true;
-        }
-      } catch (e) {}
-    }
-
-    return false;
+    return info.isActivated;
   } catch (e: any) {
     console.error("isAppActivated error:", e);
     const storedExpiry = localStorage.getItem('activation_expiry');
@@ -4270,12 +5349,29 @@ export async function isAppActivated(): Promise<boolean> {
   }
 }
 
-export async function activateApp(): Promise<void> {
+export async function activateApp(type: 'full' | 'trial' = 'full'): Promise<void> {
   const db = await getDb();
-  const expiryStr = calculateNextMarch31Expiry();
-  localStorage.setItem('activation_expiry', expiryStr);
-  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', expiryStr]);
-  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['is_activated', 'false']);
+  let expiryStr = '';
+
+  if (type === 'trial') {
+    expiryStr = calculateTrial15DaysExpiry();
+    localStorage.setItem('activation_expiry', expiryStr);
+    localStorage.setItem('license_type', 'trial');
+    localStorage.setItem('has_used_trial', 'true');
+
+    await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', expiryStr]);
+    await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['license_type', 'trial']);
+    await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['has_used_trial', 'true']);
+  } else {
+    expiryStr = calculateNextMarch31Expiry();
+    localStorage.setItem('activation_expiry', expiryStr);
+    localStorage.setItem('license_type', 'full');
+
+    await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['activation_expiry', expiryStr]);
+    await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['license_type', 'full']);
+  }
+
+  await db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)', ['is_activated', 'true']);
 }
 
 export async function wipeAllData(): Promise<void> {
@@ -4327,7 +5423,7 @@ export async function wipeAllData(): Promise<void> {
 
   // Preserve license / activation in settings table, wipe all company & store settings
   try {
-    await db.execute("DELETE FROM settings WHERE key NOT IN ('activation_expiry', 'is_activated')");
+    await db.execute("DELETE FROM settings WHERE key NOT IN ('activation_expiry', 'is_activated', 'license_type', 'has_used_trial')");
   } catch (e) {
     console.warn('Could not clear non-activation settings:', e);
   }
@@ -4354,7 +5450,7 @@ export async function wipeAllData(): Promise<void> {
   }
 
   // Clear localStorage except license/activation keys, session, and profit calculation preference
-  const preservedKeys = ['has_activated', 'activation_expiry', 'auth_user', 'profitTaxMode'];
+  const preservedKeys = ['has_activated', 'activation_expiry', 'license_type', 'has_used_trial', 'auth_user', 'profitTaxMode'];
   const preservedValues: Record<string, string> = {};
   preservedKeys.forEach(k => {
     const val = localStorage.getItem(k);
@@ -4396,10 +5492,10 @@ export interface WarehouseItem {
 export interface StockMovement {
   id: number;
   date: string;
-  from_location_type: 'shop' | 'warehouse' | 'direct_inward';
+  from_location_type: 'shop' | 'warehouse' | 'direct_inward' | 'customer' | 'supplier';
   from_location_id: number;
   from_location_name: string;
-  to_location_type: 'shop' | 'warehouse';
+  to_location_type: 'shop' | 'warehouse' | 'customer' | 'supplier';
   to_location_id: number;
   to_location_name: string;
   product_id: number;
@@ -4545,9 +5641,9 @@ export async function moveStock(
 
   // Record movement in history
   await db.execute(
-    `INSERT INTO stock_movements (from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [fromType, fromId, fromName, toType, toId, toName, productId, quantity, notes]
+    `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [getLocalTimestamp(), fromType, fromId, fromName, toType, toId, toName, productId, quantity, notes]
   );
 }
 
@@ -4590,9 +5686,9 @@ export async function addStockDirectlyToWarehouse(
 
   // Record movement in history
   await db.execute(
-    `INSERT INTO stock_movements (from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
-     VALUES ('direct_inward', 0, 'Direct Inward / Supplier', 'warehouse', $1, $2, $3, $4, $5)`,
-    [warehouseId, whRes[0].name, productId, quantity, notes]
+    `INSERT INTO stock_movements (date, from_location_type, from_location_id, from_location_name, to_location_type, to_location_id, to_location_name, product_id, quantity, notes)
+     VALUES ($1, 'direct_inward', 0, 'Direct Inward / Supplier', 'warehouse', $2, $3, $4, $5, $6)`,
+    [getLocalTimestamp(), warehouseId, whRes[0].name, productId, quantity, notes]
   );
 }
 

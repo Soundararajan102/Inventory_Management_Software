@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getDb } from './db';
+import { getActiveCompany } from './companies';
 
 export interface User {
   id: number;
   username: string;
   role: 'admin' | 'billing' | 'stock';
   permissions: string[];
+  companyId?: string;
 }
 
 interface AuthContextType {
@@ -22,10 +24,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check local storage for persistent login (optional)
+    // Check local storage for persistent login
     const storedUser = localStorage.getItem('auth_user');
     if (storedUser) {
-      setUser(JSON.parse(storedUser));
+      try {
+        const parsed: User = JSON.parse(storedUser);
+        const activeComp = getActiveCompany();
+        // If stored user was logged into a different company, clear session
+        if (parsed.companyId && parsed.companyId !== activeComp.id) {
+          localStorage.removeItem('auth_user');
+          setUser(null);
+        } else {
+          setUser(parsed);
+        }
+      } catch (e) {
+        localStorage.removeItem('auth_user');
+      }
     }
     setIsLoading(false);
   }, []);
@@ -45,11 +59,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (rawUser.permissions) perms = JSON.parse(rawUser.permissions);
         } catch(e) {}
 
+        const activeComp = getActiveCompany();
         const loggedInUser: User = {
           id: rawUser.id,
           username: rawUser.username,
           role: rawUser.role,
-          permissions: perms
+          permissions: perms,
+          companyId: activeComp.id
         };
         setUser(loggedInUser);
         localStorage.setItem('auth_user', JSON.stringify(loggedInUser));
